@@ -1,0 +1,68 @@
+{
+  "name": "progress-terminal",
+  "displayName": "Progress Terminal for Claude Code",
+  "description": "See what Claude Code is doing, live: one terminal shows every task's steps and progress, updated every second, without moving your cursor.",
+  "version": "0.1.0",
+  "publisher": "hassani-labs",
+  "license": "MIT",
+  "icon": "icon.png",
+  "homepage": "https://github.com/Amer-Hassani/progress-terminal",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Amer-Hassani/progress-terminal.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Amer-Hassani/progress-terminal/issues"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "AI"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "progress",
+    "terminal",
+    "agents",
+    "ai"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "progressTerminal.setup",
+        "title": "Set up Claude Code",
+        "category": "Progress Terminal"
+      },
+      {
+        "command": "progressTerminal.remove",
+        "title": "Remove from Claude Code",
+        "category": "Progress Terminal"
+      },
+      {
+        "command": "progressTerminal.show",
+        "title": "Show",
+        "category": "Progress Terminal"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:uninstall": "node ./uninstall.js",
+    "test": "node test/setup.test.js && node test/extension.test.js"
+  }
+}
