@@ -68,6 +68,7 @@ def update(jid, fn):
     with core.Lock():
         j = get_job(jid)
         fn(j)
+        j['ev_t'] = time.time()  # a report from the session is proof that work is moving
         core.save(j)
         return j
 
@@ -81,7 +82,10 @@ def add_steps(j, names, weights):
 
 def set_pct(j, name, pct, detail=None):
     s = step(j, name)
-    s['pct'] = max(0.0, min(100.0, float(pct)))
+    new = max(0.0, min(100.0, float(pct)))
+    if new != s['pct']:
+        s['tr'] = time.time()  # when this real number was reported (the view's estimate restarts from here)
+    s['pct'] = new
     if detail is not None:
         s['detail'] = core.short(detail, 110)
     if s['t0'] is None and s['pct'] > 0:

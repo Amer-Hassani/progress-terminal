@@ -3,7 +3,9 @@
 SessionStart      tell Claude how to add steps (one line of context)
 UserPromptSubmit  remember a short, masked title for the next job (first 60 characters)
 PreToolUse        first tool call starts the job; every call adds one log line built from the tool's
-                  description or file name, never from command text; Agent/SendMessage add an agent step
+                  description or file name, never from command text; Agent/SendMessage add an agent step;
+                  the call is recorded as running ('tool': name + start time) until its PostToolUse
+PostToolUse       (and PostToolUseFailure) the running call ended; only used when these hooks are wired
 SubagentStop      mark the oldest running agent step done
 Stop              end the job, or keep it 'waiting' while a `progress run/dl` or an agent is still going
 
@@ -65,7 +67,9 @@ def main():
                 for a in j.get('agents', []):
                     if not a.get('done'):
                         a['done'] = True
+                        a['t1'] = time.time()
                         break
+                j['ev_t'] = time.time()
                 if j.get('waiting') and not core.busy(j):
                     core.finish(j)
                 core.save(j)
@@ -81,6 +85,8 @@ def main():
             j = core.current_job(sid) or core.new_job(sid, core.session_title(sid))
             j['waiting'] = False
             j['actions'] = j.get('actions', 0) + 1
+            j['tool'] = {'name': core.short(line or tool, 60), 't': time.time()}
+            j['ev_t'] = time.time()
             if line:
                 core.add_log(j, line)
             if tool in ('Agent', 'SendMessage'):
@@ -88,10 +94,21 @@ def main():
                 j.setdefault('agents', []).append({'name': name, 'done': False, 't0': time.time()})
             core.save(j)
         return
+    if ev in ('PostToolUse', 'PostToolUseFailure'):
+        with core.Lock():
+            j = core.live_job(sid)
+            if j:
+                j['tool'] = None
+                j['post'] = True  # this machine sends tool-finished events: idle time can be told apart
+                j['ev_t'] = time.time()
+                core.save(j)
+        return
     if ev == 'Stop':
         with core.Lock():
             j = core.live_job(sid)
             if j:
+                j['tool'] = None
+                j['ev_t'] = time.time()
                 if core.busy(j):
                     j['waiting'] = True
                 else:

@@ -8,7 +8,9 @@ See what Claude Code is doing while it works. One terminal in VS Code, called Pr
 
 The Progress terminal opens by itself when Claude Code starts working, and your cursor stays where it was, so you can keep typing. Several tasks at once each get their own section in the same terminal.
 
-When Claude Code splits a task into steps, you see each step's percentage and the time left. A task without steps shows how long it has been running and what Claude Code did last, without a percentage. Downloads and long commands show the size done, the total, the speed and the time left.
+When Claude Code splits a task into steps, you see each step's percentage, to three decimals, and the time left. Between the numbers Claude Code reports, an estimate keeps moving every second while work is really going on: a tool call or an agent running, or something happening in the last 90 seconds. Estimated numbers have a "~" in front and a lighter part in the bar. They never go backwards and never reach 100% before the step is done, and when Claude Code reports a number far ahead, the display counts up to it instead of jumping. When nothing is happening the numbers stop, and a "now:" line under the total says what is going on, for example "no tool activity for 1m 40s · numbers paused", or "may be stuck" after 10 minutes without news. The time left is worked out from reported numbers only, and is left out when it cannot be trusted.
+
+A task without steps shows how long it has been running, how many actions Claude Code took, and what it did last, without a percentage. Downloads and long commands show the size done, the total, the speed and the time left.
 
 Finished tasks stay below the running ones, newest first, so you can scroll back over what was done. The newest 50 are kept for 7 days.
 
@@ -38,7 +40,7 @@ Everything stays on your machine and nothing is sent anywhere. The only network 
 - the short description Claude Code gives each command, and the names of files it reads or edits (never the commands themselves)
 - the steps and percentages Claude Code reports
 
-Anything that looks like a password or a token is masked. Only your user can read the folder. To clear the history, delete the `jobs` folder.
+Anything that looks like a password or a token is masked. Only your user can read the folder. To clear the history, delete the `jobs` folder. The view also keeps its estimates in `view-state.json`, so they don't start over when it restarts.
 
 ## How Claude Code adds steps
 

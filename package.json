@@ -2,7 +2,7 @@
   "name": "progress-terminal",
   "displayName": "Progress Terminal for Claude Code",
   "description": "See what Claude Code is doing, live: one terminal shows every task's steps and progress, updated every second, without moving your cursor.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "hassani-labs",
   "license": "MIT",
   "icon": "icon.png",
