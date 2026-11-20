@@ -87,7 +87,7 @@ Module._load = function (req, ...rest) { return req === 'vscode' ? fake : origLo
   answer = 'Not now'; infos.length = 0; state.clear();
   ext2.activate(ctx); await sleep(200);
   infos.length = 0; ext2.activate(ctx); await sleep(200);
-  ok('"Not now" is remembered: no second question', infos.length === 0 && state.get('declined-0.1.0') === true);
+  ok('"Not now" is remembered: no second question', infos.length === 0 && state.get('declined-' + require('../package.json').version) === true);
   ext2.deactivate();
 
   console.log(`--- ${pass} passed, ${fail} failed`);

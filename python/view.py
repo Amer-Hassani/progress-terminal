@@ -29,7 +29,9 @@ def lock_or_exit():
         pid = 0
     if pid and pid != os.getpid() and core.pid_alive(pid):
         sys.exit(0)
-    with open(core.VIEW_LOCK, 'w') as f:
+    fd = os.open(core.VIEW_LOCK, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(core.VIEW_LOCK, 0o600)  # an older lock may still be 644
+    with os.fdopen(fd, 'w') as f:
         f.write(str(os.getpid()))
 
 
@@ -155,6 +157,7 @@ def main():
     sys.stdout.flush()
     atexit.register(restore)
     offset, last, next_draw = 0, None, 0.0
+    last_key = 0.0
     while True:
         now = time.time()
         try:
@@ -166,7 +169,9 @@ def main():
         sz = shutil.get_terminal_size((100, 30))
         cols, rows = sz.columns, sz.lines
         W = max(20, min(50, cols - 40))
-        live = [j for j in jobs if not j.get('end')]
+        # running jobs first, then jobs waiting on background work; newest first in each
+        live = sorted((j for j in jobs if not j.get('end')),
+                      key=lambda j: (bool(j.get('waiting')), -j.get('t0', 0)))
         done = sorted((j for j in jobs if j.get('end')), key=lambda j: -j['end'])
         lines = []
         for j in live:
@@ -177,6 +182,8 @@ def main():
             lines += [D + '── Earlier (%d) ' % len(done) + '─' * max(0, cols - 16) + R0, '']
             for j in done:
                 lines += section(j, cols, W, now) + ['']
+        if live and now - last_key > 10:
+            offset = 0  # nobody is scrolling: show the running job, not old history
         body = max(1, rows - 2)
         offset = max(0, min(offset, len(lines) - body))
         shown = lines[offset:offset + body]
@@ -191,6 +198,8 @@ def main():
             last = txt
         wait = max(0.05, 1 - (time.time() % 1) + 0.02)
         dl, dp, jump = read_keys(wait)
+        if dl or dp or jump:
+            last_key = time.time()
         if jump == 'top':
             offset = 0
         elif jump == 'end':
