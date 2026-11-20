@@ -21,6 +21,7 @@ G, Y, D, B, R0 = '\033[92m', '\033[93m', '\033[2m', '\033[1m', '\033[0m'
 KEYS = {b'\x1b[A': -1, b'\x1bOA': -1, b'\x1b[B': 1, b'\x1bOB': 1, b'k': -1, b'j': 1}
 PAGE = {b'\x1b[5~': -1, b'\x1b[6~': 1, b' ': 1}
 _tty = None
+show_all = False  # 'a' key: list finished agents one by one instead of one folded line
 
 
 def lock_or_exit():
@@ -252,7 +253,18 @@ def section(j, cols, W, now):
         out.append('  %sTOTAL%s%s  %s%s%s%s%s' % (B, R0, pct_txt(real, total), bar(real, W, total >= 99.9995, moving, total), rep, D, left, R0))
         if doing:
             out.append('  ' + (D if moving else Y) + 'now: ' + doing[:cols - 9] + R0)
-        for i, s in enumerate(steps, 1):
+        finished = [i for i in range(plain + 1, len(steps) + 1)
+                    if steps[i - 1]['pct'] >= 100 and shown[i - 1] >= 99.9995]
+        fold = len(finished) > 1 and not show_all
+        order = list(range(1, plain + 1))
+        if fold:
+            order.append(None)  # one line for all finished agents, then the running ones
+        order += [i for i in range(plain + 1, len(steps) + 1) if not (fold and i in finished)]
+        for i in order:
+            if i is None:
+                out.append('  %s✔%s %s%d agents done · press a to list them%s' % (G, R0, D, len(finished), R0))
+                continue
+            s = steps[i - 1]
             done = s['pct'] >= 100 and shown[i - 1] >= 99.9995
             on = (i - 1) in active
             mark = G + '✔' + R0 if done else ((Y if moving else D) + '▸' + R0 if on or s['pct'] >= 100 else D + '·' + R0)
@@ -308,7 +320,7 @@ def read_keys(timeout):
     i = 0
     while i < len(data):
         for seq, n in list(KEYS.items()) + [(k, None) for k in PAGE] + [(b'\x1b[H', 'top'), (b'\x1b[1~', 'top'), (b'g', 'top'),
-                                                                          (b'\x1b[F', 'end'), (b'\x1b[4~', 'end'), (b'G', 'end')]:
+                                                                          (b'\x1b[F', 'end'), (b'\x1b[4~', 'end'), (b'G', 'end'), (b'a', 'all')]:
             if data[i:i + len(seq)] == seq:
                 if seq in KEYS:
                     lines += KEYS[seq]
@@ -324,7 +336,7 @@ def read_keys(timeout):
 
 
 def main():
-    global _tty, _dt
+    global _tty, _dt, show_all
     lock_or_exit()
     atexit.register(unlock)
     for sg in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -385,6 +397,8 @@ def main():
         hint = 'scroll: wheel / ↑ ↓ / PgUp PgDn / Home End' if len(lines) > body else ''
         if any(re.search(r'~ *[0-9]', l) for l in shown):
             hint = '~ = estimate between reports, moves only while work runs' + ('  ·  ' + hint if hint else '')
+        if show_all:
+            hint = 'a = fold finished agents again' + ('  ·  ' + hint if hint else '')
         if offset:
             hint = 'line %d of %d · Home = back to the top' % (offset + 1, len(lines))
         txt = '\033[H' + ''.join(l + '\033[K\n' for l in shown) + '\033[J' + \
@@ -397,7 +411,9 @@ def main():
         dl, dp, jump = read_keys(wait)
         if dl or dp or jump:
             last_key = time.time()
-        if jump == 'top':
+        if jump == 'all':
+            show_all = not show_all
+        elif jump == 'top':
             offset = 0
         elif jump == 'end':
             offset = len(lines)

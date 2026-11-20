@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Finished agents fold into one line, so the running ones stay on screen when a task has many agents. Press a to list them, and a again to fold them.
+
 ## 0.1.2
 
 - Percentages show three decimals and keep moving every second while Claude Code is working, instead of sitting still and then jumping. Numbers between Claude Code's own reports are estimates, marked with "~" and a lighter part in the bar.
