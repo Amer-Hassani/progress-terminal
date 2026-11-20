@@ -10,6 +10,17 @@ The Progress terminal opens by itself when Claude Code starts working, and your 
 
 When Claude Code splits a task into steps, you see each step's percentage, to three decimals, and the time left. Between the numbers Claude Code reports, an estimate keeps moving every second while work is really going on: a tool call or an agent running, or something happening in the last 90 seconds. Estimated numbers have a "~" in front and a lighter part in the bar. They never go backwards and never reach 100% before the step is done, and when Claude Code reports a number far ahead, the display counts up to it instead of jumping. When nothing is happening the numbers stop, and a "now:" line under the total says what is going on, for example "no tool activity for 1m 40s · numbers paused", or "may be stuck" after 10 minutes without news. The time left is worked out from reported numbers only, and is left out when it cannot be trusted.
 
+### Reading a bar
+
+![A bar with three parts: done, guess and to do; and a finished bar in green](https://raw.githubusercontent.com/Amer-Hassani/progress-terminal/main/media/bar-colours.png)
+
+- **Done**: what Claude Code has reported.
+- **Guess**: the estimate on top of it, the same guess as the "~" in front of the number.
+- **To do**: what is left.
+- **Finished**: the whole bar turns green.
+
+Agents never report a percentage, so an agent's bar is all guess until it finishes.
+
 A task without steps shows how long it has been running, how many actions Claude Code took, and what it did last, without a percentage. Downloads and long commands show the size done, the total, the speed and the time left.
 
 Finished tasks stay below the running ones, newest first, so you can scroll back over what was done. The newest 50 are kept for 7 days.

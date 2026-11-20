@@ -82,6 +82,28 @@ ok('task without steps: actions and "now:", no bar', o.nosteps.lines.some((l) =>
   o.nosteps.lines.some((l) => l.includes('now: last action: Bash: build')) && o.nosteps.lines.every((l) => !/[█░▓]/.test(l)));
 ok('view-state.json is private (600)', o.state_mode === '0o600', o.state_mode);
 
+// zoomed in (narrow terminal): no line may be wider than the screen, or it wraps and breaks bars and scrolling
+{
+  const w = spawnSync(PY, ['-I', '-c', String.raw`
+import sys, time, re, unicodedata
+sys.path.insert(0, sys.argv[1])
+import view
+now = time.time()
+j = {'id': 'w', 'title': 'a very long task title with an emoji 🎯 that goes on and on', 't0': now - 600, 'updated': now, 'ev_t': now,
+     'tool': {'name': 'Bash: a long description of what is running', 't': now}, 'post': True,
+     'steps': [{'name': 'Build slides in batches (agents) and more', 'pct': 40, 'w': 1, 'detail': 'x' * 200}],
+     'agents': [{'name': 'Split slides 42 and 136', 'done': False, 't0': now - 60}], 'log': ['y' * 200]}
+vis = lambda l: sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', l))
+worst = 0
+for cols in range(20, 160, 7):
+    view._dt = 1.0
+    W = max(20, min(50, cols - 40))
+    worst = max([worst] + [vis(view.clip(l, cols - 1)) - (cols - 1) for l in view.section(j, cols, W, now)])
+print(worst)
+`, SRC], { encoding: 'utf8', env: { ...process.env, PROGRESS_HOME: home } });
+  ok('narrow terminal: no line wider than the screen (20 to 160 columns)', w.stdout.trim() === '0' || Number(w.stdout) <= 0, w.stdout + w.stderr);
+}
+
 fs.rmSync(home, { recursive: true, force: true });
 console.log(`--- ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+- A foreground agent that is still running is no longer closed as "stopped" when another agent finishes. Agents missing from Claude Code's running list are closed only when the turn ends, or when they had been listed before.
+- Messages to an agent: when the agent finishes, every row for it is ticked, and a message row is never labelled "stopped".
+- npm test runs all four test files.
+- The extension page explains the colours of a bar.
+- Zooming in (a narrow terminal) no longer breaks the bars or stops scrolling: no line is wider than the screen, and step names shorten first.
+
 ## 0.1.4
 
 - When an agent finishes, its own row is ticked. Before, the oldest open agent row was ticked, so with several agents the wrong rows turned green.

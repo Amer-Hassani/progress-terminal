@@ -12,6 +12,7 @@ import signal
 import sys
 import termios
 import time
+import unicodedata
 import tty
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -271,7 +272,8 @@ def section(j, cols, W, now):
             done = s['pct'] >= 100 and shown[i - 1] >= 99.9995
             on = (i - 1) in active
             mark = G + '✔' + R0 if done else ((Y if moving else D) + '▸' + R0 if on or s['pct'] >= 100 else D + '·' + R0)
-            out.append('  %s %2d. %-30s %s  %s' % (mark, i, s['name'][:30], pct_txt(s['pct'], shown[i - 1]),
+            nw = max(10, min(30, cols - 22 - W // 2))  # name column shrinks before anything gets cut
+            out.append('  %s %2d. %-*s %s  %s' % (mark, i, nw, core.short(s['name'], nw), pct_txt(s['pct'], shown[i - 1]),
                                                 bar(s['pct'], W // 2, done, on and moving, shown[i - 1])))
             detail = s.get('detail', '')
             if on and not detail and i <= plain:
@@ -291,6 +293,31 @@ def section(j, cols, W, now):
     if j.get('end_msg'):
         out.append('  ' + G + j['end_msg'][:cols - 4] + R0)
     return out
+
+
+ANSI = re.compile(r'\033\[[0-9;?]*[A-Za-z]')
+
+
+def clip(line, cols):
+    """Cut a line to the terminal width, colour codes not counted. A line wider than the terminal wraps onto a
+    second row: the bars break up and the screen no longer matches the rows the view counted (scroll stops)."""
+    if cols <= 0:
+        return ''
+    out, n, i = [], 0, 0
+    while i < len(line):
+        m = ANSI.match(line, i)
+        if m:
+            out.append(m.group())
+            i = m.end()
+            continue
+        cw = 2 if unicodedata.east_asian_width(line[i]) in ('W', 'F') else 1
+        if n + cw > cols:
+            n = cols
+            break
+        out.append(line[i])
+        n += cw
+        i += 1
+    return ''.join(out) + (R0 if n >= cols else '')
 
 
 def safe_section(j, cols, W, now):
@@ -393,7 +420,7 @@ def main():
             offset = 0  # nobody is scrolling: show the running job, not old history
         body = max(1, rows - 2)
         offset = max(0, min(offset, len(lines) - body))
-        shown = lines[offset:offset + body]
+        shown = [clip(l, cols - 1) for l in lines[offset:offset + body]]
         if now - saved > 5:
             est_save({j['id'] for j in live})
             saved = now

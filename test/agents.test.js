@@ -19,7 +19,7 @@ const hook = (t, ev) => spawnSync(PY, ['-I', path.join(SRC, 'hook.py')],
 const job = (t) => {
   const dir = path.join(t.home, 'jobs');
   const f = fs.readdirSync(dir).filter((n) => n.endsWith('.json')).map((n) => path.join(dir, n))
-    .map((p) => JSON.parse(fs.readFileSync(p, 'utf8'))).find((j) => j.session === t.sid || true);
+    .map((p) => JSON.parse(fs.readFileSync(p, 'utf8')))[0];
   return f;
 };
 const age = (t, secs) => {  // make every agent row older, to get past the grace period
@@ -94,12 +94,53 @@ const row = (t, name) => job(t).agents.find((a) => a.name === name);
   ok('SendMessage row closed by its own agent', job(t).agents[0].done === true && !job(t).agents[0].stopped);
 }
 
+// 8. two foreground agents (never listed): the first stopping leaves the second running
+{
+  const t = fresh();
+  launch(t, 'FG one'); launch(t, 'FG two'); age(t, 60);
+  hook(t, { hook_event_name: 'SubagentStop', agent_id: 'f1', background_tasks: [] });
+  ok('foreground pair: the second stays running, not stopped', row(t, 'FG two').done === false && !row(t, 'FG two').stopped);
+}
+
+// 9. a background agent stopping while a foreground one runs leaves the foreground one alone
+{
+  const t = fresh();
+  launch(t, 'BG'); launch(t, 'FG long'); age(t, 60);
+  hook(t, { hook_event_name: 'SubagentStop', agent_id: 'b1', background_tasks: [task('b1', 'BG')] });
+  ok('bg stops during fg: bg done, fg still running', row(t, 'BG').done === true && row(t, 'FG long').done === false);
+}
+
+// 10. a message to an agent by id: both rows with that id close as done when it stops, none "stopped"
+{
+  const t = fresh();
+  launch(t, 'Lead');
+  hook(t, { hook_event_name: 'SubagentStop', agent_id: 'other', background_tasks: [task('l1', 'Lead'), task('other', 'Other')] });
+  hook(t, { hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 'l1', summary: 'RESULT' } });
+  age(t, 60);
+  hook(t, { hook_event_name: 'SubagentStop', agent_id: 'l1', background_tasks: [task('l1', 'Lead')] });
+  const rows = job(t).agents.filter((a) => a.id === 'l1');
+  ok('message by id: every row of that agent done, none stopped', rows.length === 2 && rows.every((a) => a.done && !a.stopped), JSON.stringify(job(t).agents));
+}
+
+// 11. a message to an agent by name, agent still running: never labelled stopped
+{
+  const t = fresh();
+  launch(t, 'Lead');
+  hook(t, { hook_event_name: 'PreToolUse', tool_name: 'SendMessage', tool_input: { to: 'lead-name', summary: 'RESULT' } });
+  age(t, 60);
+  hook(t, { hook_event_name: 'SubagentStop', agent_id: 'zz', background_tasks: [task('l1', 'Lead')] });
+  ok('message by name: not closed on another agent stopping', row(t, 'RESULT').done === false);
+  hook(t, { hook_event_name: 'Stop', background_tasks: [task('l1', 'Lead')] });
+  ok('message by name: on Stop done, never "stopped"; the agent itself stays running', !row(t, 'RESULT').stopped && row(t, 'Lead').done === false);
+}
+
 // 7. the view says how many were stopped without a report
 {
   const t = fresh();
   for (let i = 0; i < 4; i++) launch(t, 'Batch ' + i);
   age(t, 120);
   hook(t, { hook_event_name: 'SubagentStop', agent_id: 'q0', background_tasks: [task('q0', 'Batch 0')] });
+  hook(t, { hook_event_name: 'Stop', background_tasks: [] });  // turn over: the other three vanished
   const out = spawnSync(PY, ['-I', '-c', `
 import sys, os, re, json
 sys.path.insert(0, ${JSON.stringify(SRC)})
