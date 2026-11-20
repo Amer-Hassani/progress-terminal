@@ -66,7 +66,7 @@ Claude Code can run in VS Code's Claude panel or in any terminal, as long as VS 
 
 Use the mouse wheel, the arrow keys, Page Up and Page Down, or Home and End.
 
-When a task has many agents, the finished ones fold into one line ("✔ 52 agents done") and only the running ones get a row each. Press a to list the finished ones, and a again to fold them.
+When a task has many agents, the finished ones fold into one line ("✔ 52 agents done") and only the running ones get a row each. Press a to list the finished ones, and a again to fold them. Agents that stopped without a report (stopped by hand, or lost in a restart) are closed too, and counted separately.
 
 Made by [Hassani Labs](https://hassanilabs.com). Not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- When an agent finishes, its own row is ticked. Before, the oldest open agent row was ticked, so with several agents the wrong rows turned green.
+- Agents that stop without a report (stopped by hand, killed by a restart, failed) are closed instead of showing as running for two hours. The folded line counts them: "52 agents done (30 stopped without a report)".
+
 ## 0.1.3
 
 - Finished agents fold into one line, so the running ones stay on screen when a task has many agents. Press a to list them, and a again to fold them.

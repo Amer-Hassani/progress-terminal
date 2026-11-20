@@ -64,11 +64,7 @@ def main():
         with core.Lock():
             j = core.live_job(sid)
             if j:
-                for a in j.get('agents', []):
-                    if not a.get('done'):
-                        a['done'] = True
-                        a['t1'] = time.time()
-                        break
+                agents_stopped(j, d)
                 j['ev_t'] = time.time()
                 if j.get('waiting') and not core.busy(j):
                     core.finish(j)
@@ -91,7 +87,10 @@ def main():
                 core.add_log(j, line)
             if tool in ('Agent', 'SendMessage'):
                 name = core.short(ti.get('description') or ti.get('summary') or 'agent', 40)
-                j.setdefault('agents', []).append({'name': name, 'done': False, 't0': time.time()})
+                a = {'name': name, 'done': False, 't0': time.time()}
+                if tool == 'SendMessage' and ti.get('to'):
+                    a['id'] = str(ti['to'])  # a message to an agent that already runs: its id is known now
+                j.setdefault('agents', []).append(a)
             core.save(j)
         return
     if ev in ('PostToolUse', 'PostToolUseFailure'):
@@ -109,11 +108,51 @@ def main():
             if j:
                 j['tool'] = None
                 j['ev_t'] = time.time()
+                agents_stopped(j, d)
                 if core.busy(j):
                     j['waiting'] = True
                 else:
                     core.finish(j)
                 core.save(j)
+
+
+GRACE = 30
+DEAD = ('completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled', 'error')
+
+
+def agents_stopped(j, d):
+    """Close the agent rows whose agent is no longer running.
+    SubagentStop names the agent that stopped (agent_id). SubagentStop and Stop also list what is still in
+    flight (background_tasks): rows that match none of it were stopped, killed by a restart, or failed without a
+    word, and are closed as 'stopped'. Rows younger than GRACE seconds are left alone (the agent may not be
+    listed yet). Without that list (older Claude Code), the oldest open row is closed, as before."""
+    now = time.time()
+    rows = [a for a in j.get('agents', []) if not a.get('done')]
+    tasks = d.get('background_tasks')
+    listed = isinstance(tasks, list)
+    gone = d.get('agent_id')
+    running = [t for t in (tasks if listed else []) if isinstance(t, dict) and t.get('type', 'subagent') == 'subagent'
+               and str(t.get('status', 'running')).lower() not in DEAD and t.get('id') != gone]
+    alive = {t.get('id') for t in running}
+    # learn ids: a running agent whose description matches an open row without an id
+    for t in running:
+        if not any(a.get('id') == t.get('id') for a in rows):
+            row = next((a for a in rows if not a.get('id') and a['name'] == core.short(t.get('description') or 'agent', 40)), None)
+            if row:
+                row['id'] = t.get('id')
+    if gone:
+        row = next((a for a in rows if a.get('id') == gone), None)
+        if not row:
+            desc = next((t.get('description') for t in (tasks if listed else []) if isinstance(t, dict) and t.get('id') == gone), None)
+            row = next((a for a in rows if not a.get('id') and desc and a['name'] == core.short(desc, 40)), None)
+        if not row:  # a foreground agent (never listed) or an old Claude Code: the oldest open row without a live agent
+            row = next((a for a in rows if not a.get('id') or a.get('id') not in alive), None)
+        if row:
+            row.update(done=True, t1=now, id=gone)
+    if listed:
+        for a in rows:
+            if not a.get('done') and a.get('id') not in alive and now - a.get('t0', now) > GRACE:
+                a.update(done=True, t1=now, stopped=True)
 
 
 if __name__ == '__main__':

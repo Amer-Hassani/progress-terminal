@@ -206,7 +206,8 @@ def section(j, cols, W, now):
     steps = list(j.get('steps', []))
     plain = len(steps)
     for a in j.get('agents', []):
-        steps.append({'name': 'agent: ' + a['name'], 'pct': 100 if a.get('done') else 0, 'w': 1, 'detail': '',
+        steps.append({'name': 'agent: ' + a['name'], 'pct': 100 if a.get('done') else 0, 'w': 1,
+                      'detail': 'stopped without a report' if a.get('stopped') else '', 'stopped': a.get('stopped'),
                       'key': 'agent:%s:%s' % (a['name'], a.get('t0'))})
     ended = j.get('end')
     el = (ended or now) - j.get('t0', now)
@@ -262,7 +263,9 @@ def section(j, cols, W, now):
         order += [i for i in range(plain + 1, len(steps) + 1) if not (fold and i in finished)]
         for i in order:
             if i is None:
-                out.append('  %s✔%s %s%d agents done · press a to list them%s' % (G, R0, D, len(finished), R0))
+                nst = sum(1 for k in finished if steps[k - 1].get('stopped'))
+                out.append('  %s✔%s %s%d agents done%s · press a to list them%s' % (
+                    G, R0, D, len(finished), (' (%d stopped without a report)' % nst) if nst else '', R0))
                 continue
             s = steps[i - 1]
             done = s['pct'] >= 100 and shown[i - 1] >= 99.9995
@@ -275,7 +278,7 @@ def section(j, cols, W, now):
                 detail = 'working · %s' % fmt(now - since)
             if ended and not done:
                 detail = 'not finished' + (' · ' + detail.replace('(not finished)', '').strip() if detail.strip(' ()') and 'not finished' not in detail else '')
-            if detail and not done:
+            if detail and (not done or s.get('stopped')):
                 out.append('       ' + D + detail[:cols - 10] + R0)
     elif not ended:
         out.append('  %s%d actions%s' % (D, j.get('actions', 0), R0))
