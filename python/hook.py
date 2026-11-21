@@ -43,7 +43,7 @@ def model_label(m):
 def definition(typ, cwd):
     """model and effort from the agent's definition file (.claude/agents/<type>.md), project first."""
     out = {}
-    for base in ([os.path.join(cwd, '.claude', 'agents')] if cwd else []) + [os.path.expanduser('~/.claude/agents')]:
+    for base in ([os.path.join(cwd, '.claude', 'agents')] if cwd else []) + [os.path.join(config_dir(), 'agents')]:
         f = os.path.join(base, typ + '.md')
         try:
             text = open(f, encoding='utf-8').read(4000)
@@ -58,13 +58,73 @@ def definition(typ, cwd):
     return out
 
 
-def agent_spec(ti, cwd):
-    """What the user should see about an agent: its model, effort and type."""
+def config_dir():
+    return os.environ.get('CLAUDE_CONFIG_DIR') or os.path.expanduser('~/.claude')
+
+
+def settings_effort(model_id):
+    """The effort Claude Code uses when nothing else sets one: per model in settings.json, then the general one."""
+    try:
+        st = json.load(open(os.path.join(config_dir(), 'settings.json'), encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    per = (st.get('modelSettings') or {}).get(str(model_id or '')) or {}
+    return effort_label(per.get('effortLevel')) or effort_label(st.get('effortLevel'))
+
+
+def last_model_id(path):
+    """The model id a transcript last answered with ('claude-fable-5-2'), from its tail; None if unknown."""
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 300000))
+            tail = f.read().decode('utf-8', 'ignore')
+    except (OSError, TypeError):
+        return None
+    found = re.findall(r'"model"\s*:\s*"(claude-[a-z0-9-]+)"', tail)
+    return found[-1] if found else None
+
+
+def last_model(path):
+    return model_label(last_model_id(path))
+
+
+def effort_label(e):
+    if isinstance(e, dict):
+        e = e.get('level') or e.get('effort')
+    return str(e) if e and isinstance(e, (str, int)) else None
+
+
+def agent_spec(ti, cwd, hook=None):
+    """What the user should see about an agent: its model, effort and type. With nothing set on the call or in the
+    agent's file, the agent runs on the session's model and effort, so those are shown by name."""
+    hook = hook or {}
     typ = str(ti.get('subagent_type') or 'general-purpose')
     d = definition(typ, cwd) if typ != 'fork' else {}
-    model = model_label(ti.get('model')) or model_label(d.get('model'))
-    effort = ti.get('effort') or d.get('effort')
-    return {'type': typ, 'model': model or 'same model as session', 'effort': str(effort) if effort else 'default effort'}
+    mid = next((m for m in (ti.get('model'), d.get('model')) if model_label(m)), None) \
+        or last_model_id(hook.get('transcript_path'))
+    model = model_label(mid)
+    effort = effort_label(ti.get('effort')) or effort_label(d.get('effort')) or effort_label(hook.get('effort')) \
+        or settings_effort(mid)
+    return {'type': typ, 'model': model or 'same model as session', 'effort': effort or 'default effort'}
+
+
+def spec_by_id(aid, hook):
+    """An agent launched earlier (another prompt, or before model and effort were recorded): its type from
+    Claude Code's own record of it, the model it really answered with, the effort from its file."""
+    tp = hook.get('transcript_path') or ''
+    if not aid or not tp.endswith('.jsonl') or not re.match(r'^[A-Za-z0-9_-]+$', aid):
+        return {}
+    base = os.path.join(tp[:-6], 'subagents', 'agent-' + aid)
+    try:
+        meta = json.load(open(base + '.meta.json', encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    out = agent_spec({'subagent_type': meta.get('agentType')}, hook.get('cwd') or '', hook)
+    real = last_model(base + '.jsonl')
+    if real:
+        out['model'] = real
+    return out
 
 
 def action(tool, ti):
@@ -148,10 +208,14 @@ def main():
                     a['msg'] = True
                     prev = next((b for b in reversed(j.get('agents', [])) if b.get('model') and
                                  (b.get('id') == a['id'] or b.get('name') == a['id'])), None)
-                    if prev:
-                        a.update({k: prev[k] for k in ('type', 'model', 'effort') if k in prev})
+                    if not prev:  # launched in an earlier prompt: look in this session's other jobs
+                        prev = next((b for o in reversed(core.all_jobs()) if o.get('sid') == sid
+                                     for b in reversed(o.get('agents', [])) if b.get('model') and
+                                     (b.get('id') == a['id'] or b.get('name') == a['id'])), None)
+                    a.update({k: prev[k] for k in ('type', 'model', 'effort') if k in prev} if prev
+                             else spec_by_id(a['id'], d))
                 else:
-                    a.update(agent_spec(ti, d.get('cwd') or ''))
+                    a.update(agent_spec(ti, d.get('cwd') or '', d))
                 j.setdefault('agents', []).append(a)
             core.save(j)
         return

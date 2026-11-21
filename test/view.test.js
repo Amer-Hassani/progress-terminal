@@ -105,5 +105,19 @@ print(worst)
 }
 
 fs.rmSync(home, { recursive: true, force: true });
+// Arabic: letters joined, each Arabic stretch turned around, numbers kept, width unchanged
+{
+  const r = spawnSync(PY, ['-I', '-c', String.raw`import sys, json; sys.path.insert(0, sys.argv[1]); import view
+cases = ['  ▸ 1. بحث نصوص   ~ 7.157%', 'A1. الخطوة 3 من 10 done', '\x1b[1mابحث…\x1b[0m done in 6s', 'plain line']
+print(json.dumps([view.visual(c) for c in cases] + [view.clip('بَحث', 10)]))`, SRC], { encoding: 'utf8' });
+  let v = []; try { v = JSON.parse(r.stdout); } catch (e) { /* shown below */ }
+  ok('arabic: joined letters, read right to left', v[0] === '  ▸ 1. ﺹﻮﺼﻧ ﺚﺤﺑ   ~ 7.157%', JSON.stringify(v) + r.stderr);
+  ok('arabic: numbers inside keep their order', v[1] === 'A1. 10 ﻦﻣ 3 ﺓﻮﻄﺨﻟﺍ done', JSON.stringify(v[1]));
+  ok('arabic: colours stay, cut mark moves to the left', v[2] === '\x1b[1m…ﺚﺤﺑﺍ\x1b[0m done in 6s', JSON.stringify(v[2]));
+  ok('arabic: other lines untouched', v[3] === 'plain line');
+  ok('arabic: same width after joining', v.slice(0, 2).every((x, i) => x.length === ['  ▸ 1. بحث نصوص   ~ 7.157%', 'A1. الخطوة 3 من 10 done'][i].length));
+  ok('arabic: vowel marks take no cell', v[4] === 'بَحث');
+}
+
 console.log(`--- ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

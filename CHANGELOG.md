@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7
+
+- Arabic reads properly: letters are joined and each Arabic stretch reads right to left, with numbers inside it kept in order. Columns and bars stay where they were.
+- Every agent row names its model and effort. A message to an agent started in an earlier prompt gets them from Claude Code's own record of that agent. With nothing set on the call or in the agent's file, the row shows the session's model and the effort from your settings, instead of "same model as session".
+
 ## 0.1.6
 
 - Agents get their own block with a count: "AGENTS 2 running · 0 done", how many of each model and effort, and rows numbered A1, A2.

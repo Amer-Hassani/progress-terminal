@@ -15,7 +15,7 @@ function fresh() {
   return { home, sid: 'sess-' + Math.random().toString(36).slice(2) };
 }
 const hook = (t, ev) => spawnSync(PY, ['-I', path.join(SRC, 'hook.py')],
-  { input: JSON.stringify({ session_id: t.sid, ...ev }), encoding: 'utf8', env: { ...process.env, PROGRESS_HOME: t.home } });
+  { input: JSON.stringify({ session_id: t.sid, ...ev }), encoding: 'utf8', env: { ...process.env, PROGRESS_HOME: t.home, CLAUDE_CONFIG_DIR: path.join(t.home, 'cfg') } });
 const job = (t) => {
   const dir = path.join(t.home, 'jobs');
   const f = fs.readdirSync(dir).filter((n) => n.endsWith('.json')).map((n) => path.join(dir, n))
@@ -183,6 +183,39 @@ j = core.load(sys.argv[2]); print('\\n'.join(re.sub(r'\\x1b\\[[0-9;]*m', '', l) 
   ok('view: long names cut in the middle keep their end', m1.length === 30 && m1.endsWith('set A') && m2.endsWith('set B') && m1 !== m2, v2.stdout + v2.stderr);
   ok('view: AGENTS heading counts running and done, by model', /AGENTS\s+3 running · 0 done\s+1 × Sonnet · medium effort, 1 × Fable 5\.2 · low effort/.test(v.stdout), v.stdout);
   ok('view: now line counts agents by model', /3 agents running \(Sonnet · medium effort, Fable 5\.2 · low effort, same model as session · default effort\)/.test(v.stdout), v.stdout);
+}
+
+// 7. model and effort always shown: a message to an agent launched in an earlier prompt, and a plain launch
+{
+  const t = fresh();
+  const cwd = path.join(t.home, 'proj');
+  fs.mkdirSync(path.join(cwd, '.claude', 'agents'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, '.claude', 'agents', 'lead.md'), '---\nname: lead\nmodel: claude-fable-5-2\neffort: low\n---\nbody');
+  const tp = path.join(t.home, 'sess.jsonl');
+  fs.writeFileSync(tp, '{"message":{"model":"claude-opus-5-5"}}\n');
+  const sub = path.join(t.home, 'sess', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(path.join(sub, 'agent-a123.meta.json'), JSON.stringify({ agentType: 'lead' }));
+  fs.writeFileSync(path.join(sub, 'agent-a123.jsonl'), '{"message":{"model":"claude-fable-5-2"}}\n');
+  hook(t, { hook_event_name: 'PreToolUse', cwd, transcript_path: tp, tool_name: 'SendMessage', tool_input: { to: 'a123', summary: 'DONE: paused', message: 'x' } });
+  const m = row(t, 'DONE: paused');
+  ok('spec: message to an earlier agent gets its model, effort and type', m && m.model === 'Fable 5.2' && m.effort === 'low' && m.type === 'lead', JSON.stringify(m));
+  hook(t, { hook_event_name: 'PreToolUse', cwd, transcript_path: tp, effort: 'medium', tool_name: 'Agent', tool_input: { description: 'Plain2', prompt: 'x' } });
+  const p2 = row(t, 'Plain2');
+  ok('spec: plain launch names the session model and effort', p2.model === 'Opus 5.5' && p2.effort === 'medium', JSON.stringify(p2));
+}
+
+// 8. no effort anywhere on the call, file or event: the level from settings.json, by name
+{
+  const t = fresh();
+  fs.mkdirSync(path.join(t.home, 'cfg'), { recursive: true });
+  fs.writeFileSync(path.join(t.home, 'cfg', 'settings.json'), JSON.stringify({ effortLevel: 'high', modelSettings: { 'claude-opus-5-5': { effortLevel: 'medium' } } }));
+  const tp = path.join(t.home, 'sess.jsonl');
+  fs.writeFileSync(tp, '{"message":{"model":"claude-opus-5-5"}}\n');
+  hook(t, { hook_event_name: 'PreToolUse', transcript_path: tp, tool_name: 'Agent', tool_input: { description: 'P3', prompt: 'x' } });
+  hook(t, { hook_event_name: 'PreToolUse', transcript_path: tp, tool_name: 'Agent', tool_input: { description: 'P4', prompt: 'x', model: 'haiku' } });
+  ok('spec: effort from settings for that model', row(t, 'P3').model === 'Opus 5.5' && row(t, 'P3').effort === 'medium', JSON.stringify(row(t, 'P3')));
+  ok('spec: effort from the general setting', row(t, 'P4').model === 'Haiku' && row(t, 'P4').effort === 'high', JSON.stringify(row(t, 'P4')));
 }
 
 console.log(`--- ${pass} passed, ${fail} failed`);

@@ -366,7 +366,7 @@ def clip(line, cols):
             out.append(m.group())
             i = m.end()
             continue
-        cw = 2 if unicodedata.east_asian_width(line[i]) in ('W', 'F') else 1
+        cw = 0 if _mark(line[i]) else 2 if unicodedata.east_asian_width(line[i]) in ('W', 'F') else 1
         if n + cw > cols:
             n = cols
             break
@@ -374,6 +374,115 @@ def clip(line, cols):
         n += cw
         i += 1
     return ''.join(out) + (R0 if n >= cols else '')
+
+
+# ---- Arabic: terminals draw one letter per cell, left to right, with no joining. So the view joins the letters
+# itself (Arabic Presentation Forms) and turns each Arabic stretch around, keeping numbers inside it readable.
+def _forms():
+    counts = [1, 2, 2, 2, 2, 4, 2, 4, 2, 4, 4, 4, 4, 4, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4,
+              4, 4, 4, 4, 4, 4, 4, 2, 2, 4]
+    letters = [chr(c) for c in range(0x0621, 0x063B)] + [chr(c) for c in range(0x0641, 0x064B)]
+    out, at = {}, 0xFE80
+    for ch, n in zip(letters, counts):
+        out[ch] = tuple(chr(at + k) for k in range(n))
+        at += n
+    return out
+
+
+FORMS = _forms()  # letter -> (alone, end[, start, middle])
+MIRROR = dict(zip('()[]{}<>«»', ')(][}{><»«'))
+
+
+def is_arabic(c):
+    return '؀' <= c <= 'ۿ' or 'ݐ' <= c <= 'ݿ' or 'ﭐ' <= c <= '﷿' or 'ﹰ' <= c <= '﻿'
+
+
+def _mark(c):
+    return unicodedata.category(c) == 'Mn'
+
+
+def _joins_next(c):  # the letter connects to the one after it
+    return c == 'ـ' or len(FORMS.get(c, ())) == 4
+
+
+def _joins_prev(c):
+    return c == 'ـ' or len(FORMS.get(c, ())) >= 2
+
+
+def shape(t):
+    if not any('ء' <= c <= 'ي' for c in t):
+        return t
+    out = list(t)
+    for i, c in enumerate(t):
+        f = FORMS.get(c)
+        if not f or len(f) == 1:
+            continue
+        p = i - 1
+        while p >= 0 and _mark(t[p]):
+            p -= 1
+        n = i + 1
+        while n < len(t) and _mark(t[n]):
+            n += 1
+        prev = p >= 0 and _joins_next(t[p])
+        nxt = n < len(t) and len(f) == 4 and _joins_prev(t[n])
+        out[i] = f[3] if prev and nxt else f[1] if prev else f[2] if nxt else f[0]
+    return ''.join(out)
+
+
+def _flip(run):
+    """One Arabic stretch, turned around for a left-to-right screen: letters (with their marks) reversed,
+    numbers like 7.157% or 12:30 kept as they read, brackets mirrored."""
+    toks, i = [], 0
+    while i < len(run):
+        c = run[i]
+        if c.isdigit():
+            j = i + 1
+            while j < len(run) and (run[j].isdigit() or (run[j] in '.,:/%' and j + 1 < len(run) and run[j + 1].isdigit())
+                                    or (run[j] == '%' and run[j - 1].isdigit())):
+                j += 1
+            toks.append(run[i:j])
+        else:
+            j = i + 1
+            while j < len(run) and _mark(run[j]):
+                j += 1
+            toks.append(MIRROR.get(c, c) + run[i + 1:j])
+        i = j
+    return ''.join(reversed(toks))
+
+
+def _visual(t):
+    if not any(is_arabic(c) for c in t):
+        return t
+    t = shape(t)
+    out, i, n = [], 0, len(t)
+    while i < n:
+        if not is_arabic(t[i]):
+            out.append(t[i])
+            i += 1
+            continue
+        j, end = i, i + 1
+        # a stretch ends at a Latin letter or at a column gap (two spaces); numbers inside it belong to it
+        while j < n and not (t[j].isalpha() and not is_arabic(t[j])) and t[j:j + 2] != '  ':
+            if is_arabic(t[j]) or t[j].isdigit() or t[j] == '…' or (t[j] == '%' and t[j - 1].isdigit()):
+                end = j + 1
+            j += 1
+        out.append(_flip(t[i:end]))
+        i = end
+    return ''.join(out)
+
+
+def visual(line):
+    """A finished screen line with its Arabic shown the way it reads. Colour codes stay where they are, and the
+    line keeps its width: one cell in, one cell out."""
+    if not any(is_arabic(c) for c in line):
+        return line
+    parts, last = [], 0
+    for m in ANSI.finditer(line):
+        parts.append(_visual(line[last:m.start()]))
+        parts.append(m.group())
+        last = m.end()
+    parts.append(_visual(line[last:]))
+    return ''.join(parts)
 
 
 def safe_section(j, cols, W, now):
@@ -476,7 +585,7 @@ def main():
             offset = 0  # nobody is scrolling: show the running job, not old history
         body = max(1, rows - 2)
         offset = max(0, min(offset, len(lines) - body))
-        shown = [clip(l, cols - 1) for l in lines[offset:offset + body]]
+        shown = [visual(clip(l, cols - 1)) for l in lines[offset:offset + body]]
         if now - saved > 5:
             est_save({j['id'] for j in live})
             saved = now
