@@ -110,7 +110,7 @@ const row = (t, name) => job(t).agents.find((a) => a.name === name);
   ok('bg stops during fg: bg done, fg still running', row(t, 'BG').done === true && row(t, 'FG long').done === false);
 }
 
-// 10. a message to an agent by id: both rows with that id close as done when it stops, none "stopped"
+// 10. a message to an agent by id reuses its row (one agent = one row); it closes as done when it stops, not "stopped"
 {
   const t = fresh();
   launch(t, 'Lead');
@@ -119,7 +119,7 @@ const row = (t, name) => job(t).agents.find((a) => a.name === name);
   age(t, 60);
   hook(t, { hook_event_name: 'SubagentStop', agent_id: 'l1', background_tasks: [task('l1', 'Lead')] });
   const rows = job(t).agents.filter((a) => a.id === 'l1');
-  ok('message by id: every row of that agent done, none stopped', rows.length === 2 && rows.every((a) => a.done && !a.stopped), JSON.stringify(job(t).agents));
+  ok('message by id: one row for the agent, done, not stopped, message kept', rows.length === 1 && rows[0].done && !rows[0].stopped && rows[0].msgs[0] === 'RESULT', JSON.stringify(job(t).agents));
 }
 
 // 11. a message to an agent by name, agent still running: never labelled stopped
@@ -152,6 +152,37 @@ for _ in range(10):
 print('\\n'.join(re.sub(r'\\x1b\\[[0-9;]*m', '', l) for l in lines))
 `], { encoding: 'utf8', env: { ...process.env, PROGRESS_HOME: t.home } });
   ok('view: one folded line with the stopped count', /4 agents done \(3 stopped without a report\)/.test(out.stdout), out.stdout + out.stderr);
+}
+
+
+// 6. each agent row shows its model and effort; tasks under one agent drive its %
+{
+  const t = fresh();
+  const agentsDir = path.join(t.home, 'proj', '.claude', 'agents');
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.writeFileSync(path.join(agentsDir, 'lead.md'), '---\nname: lead\nmodel: claude-fable-5-2\neffort: low\n---\nbody');
+  const cwd = path.join(t.home, 'proj');
+  hook(t, { hook_event_name: 'PreToolUse', cwd, tool_name: 'Agent', tool_input: { description: 'Set A', prompt: 'x', model: 'sonnet', effort: 'medium' } });
+  hook(t, { hook_event_name: 'PreToolUse', cwd, tool_name: 'Agent', tool_input: { description: 'Lead', prompt: 'x', subagent_type: 'lead' } });
+  hook(t, { hook_event_name: 'PreToolUse', cwd, tool_name: 'Agent', tool_input: { description: 'Plain', prompt: 'x' } });
+  ok('spec: model + effort from the call', row(t, 'Set A').model === 'Sonnet' && row(t, 'Set A').effort === 'medium');
+  ok('spec: model + effort from the definition file', row(t, 'Lead').model === 'Fable 5.2' && row(t, 'Lead').effort === 'low' && row(t, 'Lead').type === 'lead');
+  ok('spec: nothing given = same as session', row(t, 'Plain').model === 'same model as session' && row(t, 'Plain').effort === 'default effort');
+  const prog = (...a) => spawnSync(PY, ['-I', path.join(SRC, 'progress.py'), '-j', job(t).id, ...a], { encoding: 'utf8', env: { ...process.env, PROGRESS_HOME: t.home } });
+  const r1 = prog('tasks', 'Set A', 'slide 63|slide 97|slide 98|slide 99');
+  const r2 = prog('task', 'Set A', 'slide 63');
+  ok('tasks: listed under the agent and ticked', r1.status === 0 && r2.status === 0 && row(t, 'Set A').tasks.length === 4 && row(t, 'Set A').tasks[0].done === true, r1.stderr + r2.stderr);
+  const v = spawnSync(PY, ['-I', '-c', `import sys,re,json; sys.path.insert(0, sys.argv[1]); import core, view
+j = core.load(sys.argv[2]); print('\\n'.join(re.sub(r'\\x1b\\[[0-9;]*m', '', l) for l in view.section(j, 160, 50, j['t0'] + 5)))`, SRC, job(t).id],
+  { encoding: 'utf8', env: { ...process.env, PROGRESS_HOME: t.home } });
+  ok('view: model and effort under the agent row', /Sonnet · medium effort/.test(v.stdout) && /Fable 5\.2 · low effort · lead/.test(v.stdout), v.stdout + v.stderr);
+  ok('view: tasks line with the ticked one', /tasks 1\/4: ✔ slide 63  ▸ slide 97/.test(v.stdout), v.stdout);
+  ok('view: agent % comes from its tasks', /A1\.\s+Set A\s+~?\s*25\.000%/.test(v.stdout), v.stdout);
+  const v2 = spawnSync(PY, ['-I', '-c', `import sys; sys.path.insert(0, sys.argv[1]); import view; print(view.mid('agent: Retype slide words, set A', 30)); print(view.mid('agent: Retype slide words, set B', 30))`, SRC], { encoding: 'utf8' });
+  const [m1, m2] = v2.stdout.trim().split('\n');
+  ok('view: long names cut in the middle keep their end', m1.length === 30 && m1.endsWith('set A') && m2.endsWith('set B') && m1 !== m2, v2.stdout + v2.stderr);
+  ok('view: AGENTS heading counts running and done, by model', /AGENTS\s+3 running · 0 done\s+1 × Sonnet · medium effort, 1 × Fable 5\.2 · low effort/.test(v.stdout), v.stdout);
+  ok('view: now line counts agents by model', /3 agents running \(Sonnet · medium effort, Fable 5\.2 · low effort, same model as session · default effort\)/.test(v.stdout), v.stdout);
 }
 
 console.log(`--- ${pass} passed, ${fail} failed`);

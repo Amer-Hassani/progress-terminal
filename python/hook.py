@@ -13,6 +13,7 @@ Only the main session counts: calls that carry agent_type (subagents) are skippe
 """
 import json
 import os
+import re
 import sys
 import time
 
@@ -21,6 +22,49 @@ import core  # noqa: E402
 
 NOT_A_PROMPT = ('[Subagent hand-back]', 'Another Claude session sent a message', '<agent-message',
                 '<task-notification', '[SYSTEM NOTIFICATION')
+
+
+MODELS = {'sonnet': 'Sonnet', 'opus': 'Opus', 'haiku': 'Haiku', 'fable': 'Fable'}
+
+
+def model_label(m):
+    """'sonnet' -> 'Sonnet', 'claude-sonnet-5-5' -> 'Sonnet 5.5', 'inherit'/None -> None."""
+    if not m or str(m).lower() in ('inherit', 'default'):
+        return None
+    m = str(m).strip()
+    if m.lower() in MODELS:
+        return MODELS[m.lower()]
+    r = re.match(r'(?:claude-)?([a-z]+)-(\d+)(?:-(\d+))?', m.lower())
+    if r and r.group(1) in MODELS:
+        return MODELS[r.group(1)] + ' ' + r.group(2) + ('.' + r.group(3) if r.group(3) else '')
+    return m[:24]
+
+
+def definition(typ, cwd):
+    """model and effort from the agent's definition file (.claude/agents/<type>.md), project first."""
+    out = {}
+    for base in ([os.path.join(cwd, '.claude', 'agents')] if cwd else []) + [os.path.expanduser('~/.claude/agents')]:
+        f = os.path.join(base, typ + '.md')
+        try:
+            text = open(f, encoding='utf-8').read(4000)
+        except OSError:
+            continue
+        fm = text.split('---')[1] if text.startswith('---') else ''
+        for key in ('model', 'effort'):
+            r = re.search(r'^%s:\s*["\']?([^"\'\n]+)' % key, fm, re.M)
+            if r:
+                out[key] = r.group(1).strip()
+        break
+    return out
+
+
+def agent_spec(ti, cwd):
+    """What the user should see about an agent: its model, effort and type."""
+    typ = str(ti.get('subagent_type') or 'general-purpose')
+    d = definition(typ, cwd) if typ != 'fork' else {}
+    model = model_label(ti.get('model')) or model_label(d.get('model'))
+    effort = ti.get('effort') or d.get('effort')
+    return {'type': typ, 'model': model or 'same model as session', 'effort': str(effort) if effort else 'default effort'}
 
 
 def action(tool, ti):
@@ -85,12 +129,29 @@ def main():
             j['ev_t'] = time.time()
             if line:
                 core.add_log(j, line)
-            if tool in ('Agent', 'SendMessage'):
+            to = str(ti.get('to') or '') if tool == 'SendMessage' else ''
+            known = next((b for b in reversed(j.get('agents', [])) if to and not b.get('msg') and
+                          (b.get('id') == to or b.get('name') == to)), None) if to else None
+            if known:
+                # a message to an agent that already has a row: same agent, so the same row (reopened if it had
+                # finished), never a second row that makes one agent look like two
+                if known.get('done'):
+                    known['done'] = False
+                    known.pop('stopped', None)
+                    known['t0'] = time.time()
+                known.setdefault('msgs', []).append(core.short(ti.get('summary') or 'message', 40))
+            elif tool in ('Agent', 'SendMessage'):
                 name = core.short(ti.get('description') or ti.get('summary') or 'agent', 40)
                 a = {'name': name, 'done': False, 't0': time.time()}
                 if tool == 'SendMessage' and ti.get('to'):
                     a['id'] = str(ti['to'])  # a message to an agent that already runs: its id (or name) is known now
                     a['msg'] = True
+                    prev = next((b for b in reversed(j.get('agents', [])) if b.get('model') and
+                                 (b.get('id') == a['id'] or b.get('name') == a['id'])), None)
+                    if prev:
+                        a.update({k: prev[k] for k in ('type', 'model', 'effort') if k in prev})
+                else:
+                    a.update(agent_spec(ti, d.get('cwd') or ''))
                 j.setdefault('agents', []).append(a)
             core.save(j)
         return

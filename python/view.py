@@ -166,7 +166,13 @@ def activity(j, now):
     quiet = now - ev
     bg = []
     if agents:
-        bg.append('%d agent%s running · %s' % (len(agents), '' if len(agents) == 1 else 's', fmt(now - min(a.get('t0', now) for a in agents))))
+        kinds = {}
+        for a in agents:
+            k = spec(a)
+            kinds[k] = kinds.get(k, 0) + 1
+        mix = ', '.join(('%d × %s' % (n, k)) if n > 1 else k for k, n in kinds.items() if k)
+        bg.append('%d agent%s running%s · %s' % (len(agents), '' if len(agents) == 1 else 's', (' (' + mix + ')') if mix else '',
+                                                 fmt(now - min(a.get('t0', now) for a in agents))))
     if procs:
         bg.append('command running')
     if j.get('waiting'):
@@ -181,6 +187,37 @@ def activity(j, now):
     if quiet < IDLE or bg:
         return True, ' · '.join(['thinking · last event %s ago' % fmt(quiet)] + bg)
     return False, 'no tool activity for %s · numbers paused' % fmt(quiet)
+
+
+def mid(name, n):
+    """Cut a long name in the middle, so its end (often what tells two rows apart: 'set A', 'set B') stays."""
+    if len(name) <= n:
+        return name
+    tail = max(4, n // 3)
+    return name[:n - tail - 1] + '…' + name[-tail:]
+
+
+def spec(a):
+    """'Sonnet · medium' for an agent row; '' for rows written before model and effort were recorded."""
+    if not a.get('model'):
+        return ''
+    e = a.get('effort') or ''
+    return '%s · %s' % (a['model'], e if e.endswith('effort') else e + ' effort')
+
+
+def agent_pct(a):
+    if a.get('done'):
+        return 100
+    ts = a.get('tasks') or []
+    return 100.0 * sum(1 for t in ts if t.get('done')) / len(ts) if ts else 0
+
+
+def task_line(a):
+    ts = a.get('tasks') or []
+    if not ts:
+        return ''
+    return 'tasks %d/%d: ' % (sum(1 for t in ts if t.get('done')), len(ts)) + \
+        '  '.join(('✔ ' if t.get('done') or a.get('done') else '▸ ') + t['name'] for t in ts)
 
 
 def pct_txt(real, shown):
@@ -207,8 +244,10 @@ def section(j, cols, W, now):
     steps = list(j.get('steps', []))
     plain = len(steps)
     for a in j.get('agents', []):
-        steps.append({'name': 'agent: ' + a['name'], 'pct': 100 if a.get('done') else 0, 'w': 1,
+        info = ' · '.join(x for x in (spec(a), a.get('type') if a.get('type') not in (None, 'general-purpose') else '') if x)
+        steps.append({'name': 'agent: ' + a['name'], 'pct': agent_pct(a), 'w': 1,
                       'detail': 'stopped without a report' if a.get('stopped') else '', 'stopped': a.get('stopped'),
+                      'spec': info, 'tasks': task_line(a), 'agent': True,
                       'key': 'agent:%s:%s' % (a['name'], a.get('t0'))})
     ended = j.get('end')
     el = (ended or now) - j.get('t0', now)
@@ -262,7 +301,20 @@ def section(j, cols, W, now):
         if fold:
             order.append(None)  # one line for all finished agents, then the running ones
         order += [i for i in range(plain + 1, len(steps) + 1) if not (fold and i in finished)]
+        agent_rows = j.get('agents', [])
+        head_done = False
         for i in order:
+            if not head_done and agent_rows and (i is None or i > plain):
+                head_done = True
+                run_n = sum(1 for a in agent_rows if not a.get('done'))
+                done_n = len(agent_rows) - run_n
+                kinds = {}
+                for a in agent_rows:
+                    if not a.get('done') and spec(a):
+                        kinds[spec(a)] = kinds.get(spec(a), 0) + 1
+                mix = ', '.join('%d × %s' % (c, k) for k, c in kinds.items())
+                out.append('  %sAGENTS%s  %s%d running%s · %d done%s' % (B, R0, Y if run_n else D, run_n, R0 + D, done_n,
+                                                                        ('   ' + mix) if mix else '') + R0)
             if i is None:
                 nst = sum(1 for k in finished if steps[k - 1].get('stopped'))
                 out.append('  %s✔%s %s%d agents done%s · press a to list them%s' % (
@@ -273,15 +325,19 @@ def section(j, cols, W, now):
             on = (i - 1) in active
             mark = G + '✔' + R0 if done else ((Y if moving else D) + '▸' + R0 if on or s['pct'] >= 100 else D + '·' + R0)
             nw = max(10, min(30, cols - 22 - W // 2))  # name column shrinks before anything gets cut
-            out.append('  %s %2d. %-*s %s  %s' % (mark, i, nw, core.short(s['name'], nw), pct_txt(s['pct'], shown[i - 1]),
+            out.append('  %s %3s %-*s %s  %s' % (mark, ('%d.' % i) if i <= plain else ('A%d.' % (i - plain)), nw, mid(s['name'][7:] if s.get('agent') else s['name'], nw), pct_txt(s['pct'], shown[i - 1]),
                                                 bar(s['pct'], W // 2, done, on and moving, shown[i - 1])))
             detail = s.get('detail', '')
             if on and not detail and i <= plain:
                 detail = 'working · %s' % fmt(now - since)
             if ended and not done:
                 detail = 'not finished' + (' · ' + detail.replace('(not finished)', '').strip() if detail.strip(' ()') and 'not finished' not in detail else '')
+            if s.get('agent'):
+                detail = ' · '.join(x for x in (s.get('spec'), detail) if x)
             if detail and (not done or s.get('stopped')):
                 out.append('       ' + D + detail[:cols - 10] + R0)
+            if s.get('tasks') and not done:
+                out.append('       ' + D + s['tasks'][:cols - 10] + R0)
     elif not ended:
         out.append('  %s%d actions%s' % (D, j.get('actions', 0), R0))
         if doing:

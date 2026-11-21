@@ -63,7 +63,11 @@ At the start of each session, Claude Code gets one line about the `progress` com
 ~/.claude/progress-terminal/progress done "Run the tests"
 ~/.claude/progress-terminal/progress run "Build" -- npm run build
 ~/.claude/progress-terminal/progress dl https://example.com/data.zip data.zip
+~/.claude/progress-terminal/progress tasks "Review slides" "slide 1|slide 2|slide 3"
+~/.claude/progress-terminal/progress task "Review slides" "slide 1"
 ```
+
+`tasks` and `task` list and tick the jobs of one agent under that agent's row.
 
 You can use the same command yourself, in any script.
 

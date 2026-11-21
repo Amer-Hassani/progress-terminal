@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- Agents get their own block with a count: "AGENTS 2 running · 0 done", how many of each model and effort, and rows numbered A1, A2.
+- Each agent row shows its model and effort (and its type, when it isn't general-purpose). They come from the Agent call, or from the agent's definition file in .claude/agents; otherwise the row says "same model as session · default effort".
+- Tasks under one agent: `progress tasks "agent name" "task 1|task 2"` lists them under the agent and `progress task "agent name" "task 1"` ticks one. The agent's bar follows its finished tasks.
+- A message to an agent that already has a row reuses that row (and reopens it if it had finished), so one agent is never shown as two.
+- Long step and agent names are shortened in the middle, so their ends ("set A", "set B") stay readable.
+
 ## 0.1.5
 
 - A foreground agent that is still running is no longer closed as "stopped" when another agent finishes. Agents missing from Claude Code's running list are closed only when the turn ends, or when they had been listed before.

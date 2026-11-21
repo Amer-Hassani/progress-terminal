@@ -95,6 +95,15 @@ def set_pct(j, name, pct, detail=None):
         s['detail'] = ''
 
 
+def agent_row(j, name):
+    """The newest agent row with this name (exact, else the first that starts with it)."""
+    rows = list(reversed(j.get('agents', [])))
+    r = next((x for x in rows if x['name'] == name), None) or next((x for x in rows if x['name'].startswith(name)), None)
+    if not r:
+        die('no agent named %r in this job' % name)
+    return r
+
+
 def mb(n):
     return '%.1f MB' % (n / 1048576.0)
 
@@ -195,6 +204,16 @@ def main(argv):
         update(jid, lambda j: set_pct(j, a[0], a[1], a[2] if len(a) > 2 else None))
     elif cmd == 'done':
         update(jid, lambda j: set_pct(j, a[0], 100))
+    elif cmd == 'tasks':
+        names = [n for n in a[1].split('|') if n]
+        update(jid, lambda j: agent_row(j, a[0]).__setitem__('tasks', [{'name': n, 'done': False} for n in names]))
+    elif cmd == 'task':
+        def tick(j):
+            t = next((t for t in agent_row(j, a[0]).get('tasks', []) if t['name'] == a[1]), None)
+            if not t:
+                die('no task %r under agent %r' % (a[1], a[0]))
+            t['done'] = True
+        update(jid, tick)
     elif cmd == 'log':
         update(jid, lambda j: core.add_log(j, a[0]))
     elif cmd == 'title':
