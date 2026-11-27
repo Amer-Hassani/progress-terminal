@@ -195,29 +195,26 @@ def main(d):
                 core.save(j)
         return
     if d.get('agent_type'):
-        # inside an agent: only its own Agent launches count, shown as nested rows (↳) under the main job
-        if ev == 'PreToolUse' and d.get('tool_name') == 'Agent':
-            ti = d.get('tool_input') or {}
-            with core.Lock():
-                j = core.current_job(sid) or core.live_job(sid)
-                if j:
-                    a = {'name': '↳ ' + core.short(ti.get('description') or 'agent', 38), 'done': False,
-                         't0': time.time(), 'nested': True, 'parent': str(d.get('agent_id') or ''),
-                         'desc': core.short(ti.get('description') or 'agent', 40)}
-                    a.update(agent_spec(ti, d.get('cwd') or '', {}))
-                    j.setdefault('agents', []).append(a)
-                    j['ev_t'] = time.time()
-                    core.save(j)
-        # ... and its background commands and watches: a row each, tagged with the agent
+        # inside an agent: what it is doing (shown under its row), the agents it launches (nested rows, ↳) and its
+        # background commands and watches. One write per tool call.
         tool = d.get('tool_name') or ''
         ti = d.get('tool_input') or {}
-        if ev == 'PreToolUse' and (tool == 'Monitor' or (tool == 'Bash' and ti.get('run_in_background') and action(tool, ti))):
+        if ev == 'PreToolUse':
             with core.Lock():
-                j = core.current_job(sid) or core.live_job(sid)
+                j = core.live_job(sid)
                 if j:
-                    r = bg_started(j, tool, ti, d)
-                    r['agent'] = str(d.get('agent_id') or '')
-                    r['agent_type'] = str(d.get('agent_type') or '')
+                    if tool == 'Agent':
+                        a = {'name': '↳ ' + core.short(agent_name(ti.get('subagent_type'), ti.get('description')), 38), 'done': False,
+                             't0': time.time(), 'nested': True, 'parent': str(d.get('agent_id') or ''),
+                             'desc': core.short(ti.get('description') or 'agent', 40)}
+                        a.update(agent_spec(ti, d.get('cwd') or '', {}))
+                        j.setdefault('agents', []).append(a)
+                    if tool == 'Monitor' or (tool == 'Bash' and ti.get('run_in_background') and action(tool, ti)):
+                        r = bg_started(j, tool, ti, d)
+                        r['agent'] = str(d.get('agent_id') or '')
+                        r['agent_type'] = str(d.get('agent_type') or '')
+                    agent_activity(j, d, action(tool, ti))
+                    j['ev_t'] = time.time()
                     core.save(j)
         elif ev in ('PostToolUse', 'PostToolUseFailure') and tool in BG_TOOLS:
             with core.Lock():
@@ -253,7 +250,7 @@ def main(d):
                     known['t0'] = time.time()
                 known.setdefault('msgs', []).append(core.short(ti.get('summary') or 'message', 40))
             elif tool in ('Agent', 'SendMessage'):
-                name = core.short(ti.get('description') or ti.get('summary') or 'agent', 40)
+                name = core.short(agent_name(ti.get('subagent_type'), ti.get('description') or ti.get('summary')), 40)
                 a = {'name': name, 'done': False, 't0': time.time()}
                 if tool == 'SendMessage' and ti.get('to'):
                     a['id'] = str(ti['to'])  # a message to an agent that already runs: its id (or name) is known now
@@ -266,6 +263,12 @@ def main(d):
                                      (b.get('id') == a['id'] or b.get('name') == a['id'])), None)
                     a.update({k: prev[k] for k in ('type', 'model', 'effort') if k in prev} if prev
                              else spec_by_id(a['id'], d))
+                    # a message summary is not a name: keep the agent's first good name (earlier row, its own record,
+                    # its type), and keep the summary as the message
+                    good = prev.get('name') if prev else agent_name(a.get('type'), (agent_meta(a['id'], d) or {}).get('description'))
+                    if good and good != 'agent':
+                        a['name'] = core.short(good, 40)
+                    a['msgs'] = [core.short(ti.get('summary') or 'message', 40)]
                 else:
                     a.update(agent_spec(ti, d.get('cwd') or '', d))
                 j.setdefault('agents', []).append(a)
@@ -345,6 +348,50 @@ def close_orphans(j):
     for a in j.get('agents', []):
         if a.get('nested') and not a.get('done') and a.get('parent') in done_ids:
             a.update(done=True, t1=time.time())
+
+
+NAMES = {'tech-lead': 'Tech lead'}  # agent types whose row always carries this name
+ACT_KEEP = 2  # actions kept per agent: what it does now and the one before
+
+
+def agent_name(typ, desc):
+    return NAMES.get(str(typ or '')) or desc or 'agent'
+
+
+def agent_activity(j, d, line):
+    """One tool call by an agent: its latest two actions, a count and the time, kept per agent id (never more).
+    Only the tool's description or a file's base name is kept (action()), masked and without control codes."""
+    aid = str(d.get('agent_id') or '')
+    if not aid or not re.match(r'^[A-Za-z0-9_-]{1,64}$', aid):
+        return
+    acts = j.setdefault('acts', {})
+    st = acts.setdefault(aid, {'n': 0, 'last': [], 't0': time.time()})
+    st['n'] += 1
+    st['type'] = core.short(str(d.get('agent_type') or ''), 30)
+    if line:
+        st['last'] = (st.get('last', []) + [{'a': core.short(line, 60), 't': time.time()}])[-ACT_KEEP:]
+    st['t'] = time.time()
+    bind_agent(j, aid, d)
+
+
+def bind_agent(j, aid, d):
+    """Find the agent's row, so the view can show its activity under it: by id, else by Claude Code's own record of the
+    agent (its description), else the only open row of the same type. The row gets 'aid'; its 'id' is never changed."""
+    rows = j.get('agents', [])
+    if any(a.get('id') == aid or a.get('aid') == aid for a in rows):
+        return
+    open_rows = [a for a in rows if not a.get('done') and not a.get('aid')]
+    desc = (agent_meta(aid, d) or {}).get('description')
+    hit = None
+    if desc:
+        hit = next((a for a in open_rows if a.get('name') == core.short(desc, 40) or a.get('desc') == core.short(desc, 40)), None)
+    if not hit:
+        same = [a for a in open_rows if a.get('type') == str(d.get('agent_type') or '')]
+        hit = same[0] if len(same) == 1 else None
+    if hit:
+        hit['aid'] = aid
+        if NAMES.get(hit.get('type') or ''):
+            hit['name'] = NAMES[hit['type']]
 
 
 BG_TOOLS = ('Bash', 'Monitor')

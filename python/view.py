@@ -294,6 +294,22 @@ def bg_lines(j, cols, W, now):
     return out
 
 
+def activity_lines(act, t0, cols, now):
+    """What a running agent is doing: its latest action and how long ago it started, the one before, how many tool
+    calls it made and how long it has been running."""
+    if not isinstance(act, dict) or not act.get('n'):
+        return []
+    last = [x for x in act.get('last') or [] if isinstance(x, dict) and x.get('a')]
+    n = act['n']
+    tail = '%d tool call%s · running %s' % (n, '' if n == 1 else 's', fmt(now - (t0 or act.get('t0') or now)))
+    out = []
+    if last:
+        out.append('       ' + Y + 'now: ' + R0 + D + ('%s · %s ago' % (last[-1]['a'], fmt(now - last[-1].get('t', now))))[:max(0, cols - 13)] + R0)
+    before = ('before: %s · ' % last[-2]['a']) if len(last) > 1 else ''
+    out.append('       ' + D + (before + tail)[:max(0, cols - 8)] + R0)
+    return out
+
+
 def section(j, cols, W, now):
     j = scrub(j)
     out = []
@@ -304,6 +320,8 @@ def section(j, cols, W, now):
         steps.append({'name': 'agent: ' + a['name'], 'pct': agent_pct(a), 'w': 1,
                       'detail': 'stopped without a report' if a.get('stopped') else '', 'stopped': a.get('stopped'),
                       'spec': info, 'tasks': task_line(a), 'agent': True,
+                      'act': (j.get('acts') or {}).get(a.get('aid') or a.get('id') or '') if not a.get('done') else None,
+                      't0': a.get('t0'),
                       'key': 'agent:%s:%s' % (a['name'], a.get('t0'))})
     ended = j.get('end')
     el = (ended or now) - j.get('t0', now)
@@ -394,6 +412,8 @@ def section(j, cols, W, now):
                 out.append('       ' + D + detail[:cols - 10] + R0)
             if s.get('tasks') and not done:
                 out.append('       ' + D + s['tasks'][:cols - 10] + R0)
+            if s.get('agent') and not done and not ended:
+                out += activity_lines(s.get('act'), s.get('t0'), cols, now)
     elif not ended:
         out.append('  %s%d actions%s' % (D, j.get('actions', 0), R0))
         if doing:

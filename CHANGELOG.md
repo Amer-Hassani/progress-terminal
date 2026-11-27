@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.11
+
+- You can see what each running agent is doing. Under its row: "now:" with its latest action and how long ago it started, the action before it, how many tool calls it has made and how long it has been running. Only a short description or a file's name is shown, never the command itself or a full path.
+- The tech lead's row is called "Tech lead", and its work shows the same way.
+- A message to an agent no longer renames its row after the message: the row keeps the agent's own name, and the message is kept with it.
+
 ## 0.1.10
 
 - Text from commands, watches, prompts and task names can no longer send control codes to your terminal. They are removed when the text is saved and again when it is shown, so task files from earlier versions are safe too. Earlier versions were affected.
