@@ -2,7 +2,7 @@
 
 ## 0.1.11
 
-- You can see what each running agent is doing. Under its row: "now:" with its latest action and how long ago it started, the action before it, how many tool calls it has made and how long it has been running. Only a short description or a file's name is shown, never the command itself or a full path.
+- You can see what each running agent is doing. Under its row: "now:" with its latest action and how long ago it started ("started 12s ago"), the action before it, how many tool calls it has made and how long it has been running. Only a short description or a file's name is shown, never the command itself or a full path.
 - The tech lead's row is called "Tech lead", and its work shows the same way.
 - A message to an agent no longer renames its row after the message: the row keeps the agent's own name, and the message is kept with it.
 

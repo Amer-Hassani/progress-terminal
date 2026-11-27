@@ -79,8 +79,9 @@ const W = (r, cols) => (r.render[String(cols)] || []);
   ok('never command text, full paths or secrets in the job file', !text.includes('rm -rf') && !text.includes('/Users/x/deep') && !text.includes('glpat-'), text);
   ok('the row was found from Claude Code\'s record of the agent (no id needed)', r.job.agents[0].aid === 'a1' && !r.job.agents[0].id);
   const L = W(r, 120);
-  ok('rendered: "now:" line with the latest action and its age', L.some((l) => /^ {7}now: Read: server\.mjs · \d+s ago$/.test(l)), L.join('\n'));
+  ok('rendered: "now:" line with the latest action and its age', L.some((l) => /^ {7}now: Read: server\.mjs · started 12s ago$/.test(l)), L.join('\n'));
   ok('rendered: the action before, tool calls and running time', L.some((l) => /^ {7}before: Bash: Run the tests · 12 tool calls · running \d+s$/.test(l)), L.join('\n'));
+  for (const c of [120, 80, 50]) ok(`rendered at ${c} columns: "now:" says "started"`, W(r, c).some((l) => /^ {7}now: .* · started /.test(l)), JSON.stringify(W(r, c)));
   for (const c of [120, 80, 50]) ok(`rendered at ${c} columns: no line wider than the terminal`, W(r, c).every((l) => [...l].length <= c - 1), JSON.stringify(W(r, c)));
   console.log('SAMPLE agent row:\n' + L.filter((l) => /A1\.|^ {7}/.test(l)).join('\n'));
 }
@@ -100,7 +101,7 @@ const W = (r, cols) => (r.render[String(cols)] || []);
   ok('tech lead: row named "Tech lead", the summary kept as its message', row.name === 'Tech lead' && row.msgs[0] === 'GO: build 0.1.11 activity', JSON.stringify(row));
   ok('tech lead: its activity is recorded and bound to its row', r.job.acts.lead1.n === 2 && r.job.acts.lead1.last[1].a === 'Grep');
   const L = W(r, 120);
-  ok('tech lead: rendered with "now:" and the action before', L.some((l) => /A1\. Tech lead/.test(l)) && L.some((l) => /now: Grep · 1m 1\ds ago/.test(l)) &&
+  ok('tech lead: rendered with "now:" and the action before', L.some((l) => /A1\. Tech lead/.test(l)) && L.some((l) => /now: Grep · started 1m 1\ds ago/.test(l)) &&
     L.some((l) => /before: Read: session\.jsonl · 2 tool calls/.test(l)), L.join('\n'));
   ok('tech lead: grep pattern and searched path never stored', !JSON.stringify(r.job).includes('secret') && !JSON.stringify(r.job).includes('/Users/x'));
   console.log('SAMPLE tech lead row:\n' + L.filter((l) => /A1\.|^ {7}/.test(l)).join('\n'));
@@ -127,7 +128,7 @@ const W = (r, cols) => (r.render[String(cols)] || []);
   const r = run(t, calls, { cols: [80] });
   const L = W(r, 80);
   const ctl = L.join('').split('').filter((c) => c.charCodeAt(0) < 0x20 || (c.charCodeAt(0) >= 0x7f && c.charCodeAt(0) <= 0x9f));
-  ok('background agent: activity shown under its row', L.some((l) => /now: Bash: Check .{0,6}the output · \d+s ago/.test(l)) && L.some((l) => /before: Edit: .* · 2 tool calls/.test(l)), L.join('\n'));
+  ok('background agent: activity shown under its row', L.some((l) => /now: Bash: Check .{0,6}the output · started \d+s ago/.test(l)) && L.some((l) => /before: Edit: .* · 2 tool calls/.test(l)), L.join('\n'));
   ok('no control codes, Arabic shaped, width kept', ctl.length === 0 && L.some((l) => /[ﹰ-﻿]/.test(l)) && L.every((l) => [...l].length <= 79), L.join('\n'));
 }
 

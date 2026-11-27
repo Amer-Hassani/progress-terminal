@@ -295,7 +295,8 @@ def bg_lines(j, cols, W, now):
 
 
 def activity_lines(act, t0, cols, now):
-    """What a running agent is doing: its latest action and how long ago it started, the one before, how many tool
+    """What a running agent is doing: its latest action and how long ago it started (agents send no 'finished' event
+    for most tools, so it may still run or be done), the one before, how many tool
     calls it made and how long it has been running."""
     if not isinstance(act, dict) or not act.get('n'):
         return []
@@ -304,7 +305,7 @@ def activity_lines(act, t0, cols, now):
     tail = '%d tool call%s · running %s' % (n, '' if n == 1 else 's', fmt(now - (t0 or act.get('t0') or now)))
     out = []
     if last:
-        out.append('       ' + Y + 'now: ' + R0 + D + ('%s · %s ago' % (last[-1]['a'], fmt(now - last[-1].get('t', now))))[:max(0, cols - 13)] + R0)
+        out.append('       ' + Y + 'now: ' + R0 + D + ('%s · started %s ago' % (last[-1]['a'], fmt(now - last[-1].get('t', now))))[:max(0, cols - 13)] + R0)
     before = ('before: %s · ' % last[-2]['a']) if len(last) > 1 else ''
     out.append('       ' + D + (before + tail)[:max(0, cols - 8)] + R0)
     return out
