@@ -5,9 +5,13 @@ UserPromptSubmit  remember a short, masked title for the next job (first 60 char
 PreToolUse        first tool call starts the job; every call adds one log line built from the tool's
                   description or file name, never from command text; Agent/SendMessage add an agent step;
                   the call is recorded as running ('tool': name + start time) until its PostToolUse
-PostToolUse       (and PostToolUseFailure) the running call ended; only used when these hooks are wired
+PostToolUse       (Bash and Monitor) the call ended; a background command or watch learns its task id here
 SubagentStop      mark the oldest running agent step done
-Stop              end the job, or keep it 'waiting' while a `progress run/dl` or an agent is still going
+Stop              end the job, or keep it 'waiting' while a `progress run/dl`, an agent or a background job is going
+
+Background jobs (Bash with run_in_background, Monitor) get a row each in job['bg']: PreToolUse adds it,
+PostToolUse gives it its task id, and core.bg_refresh settles it from Claude Code's output file for that task.
+Stop/SubagentStop (background_tasks) and task notifications (UserPromptSubmit) fill in what the file can't tell.
 
 Only the main session counts: calls that carry agent_type (subagents) are skipped.
 """
@@ -159,6 +163,8 @@ def main():
         return
     if ev == 'UserPromptSubmit':
         p = (d.get('prompt') or '').strip()
+        if '<task-notification' in p:
+            bg_notified(sid, p)
         if any(m in p[:400] for m in NOT_A_PROMPT):
             return
         first = next((l for l in p.splitlines() if l.strip() and not l.lstrip().startswith('<')), '')
@@ -169,6 +175,7 @@ def main():
             j = core.live_job(sid)
             if j:
                 agents_stopped(j, d, ev)
+                bg_stopped(j, d, ev)
                 j['ev_t'] = time.time()
                 if j.get('waiting') and not core.busy(j):
                     core.finish(j)
@@ -189,6 +196,8 @@ def main():
             j['ev_t'] = time.time()
             if line:
                 core.add_log(j, line)
+            if tool == 'Monitor' or (tool == 'Bash' and ti.get('run_in_background') and line):
+                bg_started(j, tool, ti, d)
             to = str(ti.get('to') or '') if tool == 'SendMessage' else ''
             known = next((b for b in reversed(j.get('agents', [])) if to and not b.get('msg') and
                           (b.get('id') == to or b.get('name') == to)), None) if to else None
@@ -220,12 +229,18 @@ def main():
             core.save(j)
         return
     if ev in ('PostToolUse', 'PostToolUseFailure'):
+        tool = d.get('tool_name') or ''
         with core.Lock():
             j = core.live_job(sid)
             if j:
                 j['tool'] = None
-                j['post'] = True  # this machine sends tool-finished events: idle time can be told apart
+                if tool not in BG_TOOLS:
+                    # this machine sends tool-finished events for every tool: idle time can be told apart
+                    # (setup wires PostToolUse for Bash and Monitor only, which says nothing about the others)
+                    j['post'] = True
                 j['ev_t'] = time.time()
+                if tool in BG_TOOLS:
+                    bg_launched(j, d, ev)
                 core.save(j)
         return
     if ev == 'Stop':
@@ -235,9 +250,128 @@ def main():
                 j['tool'] = None
                 j['ev_t'] = time.time()
                 agents_stopped(j, d, ev)
+                bg_stopped(j, d, ev)
                 if core.busy(j):
                     j['waiting'] = True
                 else:
+                    core.finish(j)
+                core.save(j)
+
+
+BG_TOOLS = ('Bash', 'Monitor')
+
+
+def bg_started(j, tool, ti, d):
+    """A background command or watch was asked for: one row, open until its output file says it ended."""
+    watch = tool == 'Monitor'
+    r = {'kind': 'watch' if watch else 'command', 't0': time.time(),
+         'name': core.short(ti.get('description') or ('watch' if watch else 'command'), 60),
+         'tuid': str(d.get('tool_use_id') or ''), 'slug': os.path.basename(os.path.dirname(d.get('transcript_path') or ''))}
+    if watch:
+        try:
+            r['timeout'] = min(int(ti.get('timeout_ms') or 300000), 1800000)
+        except (TypeError, ValueError):
+            r['timeout'] = 300000
+    j.setdefault('bg', []).append(r)
+
+
+def bg_launched(j, d, ev):
+    """PostToolUse of a background command or watch: its task id (and the real time limit of a watch)."""
+    rows = [r for r in j.get('bg', []) if not r.get('state')]
+    tuid = str(d.get('tool_use_id') or '')
+    r = next((x for x in rows if tuid and x.get('tuid') == tuid), None)
+    if not r:
+        return
+    if ev == 'PostToolUseFailure':
+        core.bg_close(r, 'failed')
+        return
+    resp = d.get('tool_response')
+    tid = None
+    if isinstance(resp, dict):
+        tid = resp.get('backgroundTaskId') or resp.get('taskId')
+        if resp.get('timeoutMs'):
+            try:
+                r['timeout'] = int(resp['timeoutMs'])
+            except (TypeError, ValueError):
+                pass
+        if resp.get('persistent'):
+            r.pop('timeout', None)
+    elif isinstance(resp, str):
+        m = re.search(r'(?:with ID:|task) ([A-Za-z0-9_-]+)', resp)
+        tid = m.group(1) if m else None
+    if not tid:
+        if d.get('tool_name') == 'Bash':  # it did not go to the background after all (or failed to start)
+            j['bg'].remove(r)
+        return
+    r['id'] = str(tid)
+    core.bg_refresh(j)
+
+
+def bg_stopped(j, d, ev):
+    """Stop/SubagentStop list the background work still in flight: rows learn their ids from it, and on Stop an open
+    row whose task is no longer listed and whose output file can't be found is closed as ended."""
+    tasks = d.get('background_tasks')
+    rows = [r for r in j.get('bg', []) if not r.get('state')]
+    if not rows:
+        return
+    listed = isinstance(tasks, list)
+    live = [t for t in (tasks if listed else []) if isinstance(t, dict) and t.get('type') != 'subagent']
+    for t in live:
+        if any(r.get('id') == t.get('id') for r in rows):
+            continue
+        r = next((x for x in rows if not x.get('id') and x['name'] == core.short(t.get('description') or '', 60)), None)
+        if r and t.get('id') and core._ID.match(str(t['id'])):
+            r['id'] = str(t['id'])
+    core.bg_refresh(j)
+    if listed and ev == 'Stop':
+        ids = {t.get('id') for t in live}
+        now = time.time()
+        for r in j.get('bg', []):
+            if not r.get('state') and not r.get('out') and r.get('id') not in ids and now - r.get('t0', now) > GRACE:
+                core.bg_close(r, 'ended', t1=now)
+
+
+NOTE = re.compile(r'<task-notification>(.*?)</task-notification>', re.S)
+
+
+def _tag(block, name):
+    m = re.search(r'<%s>(.*?)</%s>' % (name, name), block, re.S)
+    return m.group(1).strip() if m else ''
+
+
+def bg_notified(sid, prompt):
+    """Claude Code's own notices about background work (they arrive as a prompt while the session is idle):
+    a watch's latest event, and how a command or watch ended when its output file can't tell."""
+    notes = [(_tag(b, 'task-id'), _tag(b, 'status'), _tag(b, 'summary'), _tag(b, 'event')) for b in NOTE.findall(prompt)]
+    notes = [n for n in notes if n[0]]
+    if not notes:
+        return
+    with core.Lock():
+        for j in reversed(core.all_jobs()):
+            if j.get('sid') != sid or not any(r.get('id') for r in j.get('bg', [])):
+                continue
+            dirty = False
+            for tid, status, summary, event in notes:
+                r = next((x for x in j['bg'] if x.get('id') == tid), None)
+                if not r or r.get('state'):
+                    continue
+                dirty = True
+                if event and r.get('kind') == 'watch' and not event.startswith('[Monitor'):
+                    r['last'] = core.short(event.strip().splitlines()[-1], 200)
+                core.bg_refresh(j)
+                if r.get('state'):
+                    continue
+                code = re.search(r'exit(?: code)? (-?\d+)', summary)
+                if event.startswith('[Monitor expired'):
+                    core.bg_close(r, 'expired')
+                elif status == 'completed':
+                    core.bg_close(r, 'done', int(code.group(1)) if code else 0)
+                elif status == 'failed':
+                    core.bg_close(r, 'failed', int(code.group(1)) if code else None)
+                elif status in ('killed', 'stopped', 'cancelled'):
+                    core.bg_close(r, 'stopped')
+            if dirty:
+                if not j.get('end') and j.get('waiting') and not core.busy(j):
                     core.finish(j)
                 core.save(j)
 

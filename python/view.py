@@ -175,8 +175,14 @@ def activity(j, now):
                                                  fmt(now - min(a.get('t0', now) for a in agents))))
     if procs:
         bg.append('command running')
+    jobs_bg = [r for r in j.get('bg', []) if core.bg_open(r, now)]
+    if jobs_bg:
+        nc = sum(1 for r in jobs_bg if r.get('kind') != 'watch')
+        nw = len(jobs_bg) - nc
+        bg.append(' · '.join(x for x in (('%d background command%s' % (nc, '' if nc == 1 else 's')) if nc else '',
+                                         ('%d watch%s' % (nw, '' if nw == 1 else 'es')) if nw else '') if x) + ' running')
     if j.get('waiting'):
-        return bool(agents or procs), ('waiting for ' + ' · '.join(bg)) if bg else 'nothing running · numbers paused'
+        return bool(agents or procs or jobs_bg), ('waiting for ' + ' · '.join(bg)) if bg else 'nothing running · numbers paused'
     tool = j.get('tool')
     if tool:
         age = now - tool.get('t', now)
@@ -237,6 +243,51 @@ def when(t):
     lt = time.localtime(t)
     return time.strftime('%H:%M', lt) if time.strftime('%d/%m/%Y', lt) == time.strftime('%d/%m/%Y') \
         else time.strftime('%d/%m/%Y %H:%M', lt)
+
+
+BG_STATE = {'done': 'done', 'failed': 'failed', 'stopped': 'stopped', 'expired': 'time limit reached', 'ended': 'ended'}
+
+
+def bg_lines(j, cols, W, now):
+    """BACKGROUND block: one row per background command or watch, with how long it ran and how it ended.
+    Finished rows fold into one line like finished agents (press a to list them)."""
+    rows = j.get('bg') or []
+    if not rows:
+        return []
+    out = []
+    ended = j.get('end')
+    run = [r for r in rows if not r.get('state') and not ended]
+    fin = [r for r in rows if r not in run]
+    out.append('  %sBACKGROUND%s  %s%d running%s · %d done%s' % (B, R0, Y if run else D, len(run), R0 + D, len(fin), R0))
+    fold = len(fin) > 1 and not show_all
+    if fold:
+        bad = sum(1 for r in fin if r.get('state') in ('failed', 'stopped'))
+        out.append('  %s✔%s %s%d background jobs done%s · press a to list them%s' % (
+            G, R0, D, len(fin), (' (%d failed or stopped)' % bad) if bad else '', R0))
+    nw = max(10, min(40, cols - 50))  # the name column shrinks before anything gets cut
+    for n, r in enumerate(rows, 1):
+        if fold and r in fin:
+            continue
+        kind = 'watch' if r.get('kind') == 'watch' else 'command'
+        st = r.get('state') or ('not finished' if ended else '')
+        took = fmt((r.get('t1') or ended or now) - r.get('t0', now))
+        if not st:
+            mark = Y + '▸' + R0
+            lim = (r.get('timeout') or 0) / 1000.0
+            info = 'running · %s' % took + ((' of %s' % fmt(lim)) if kind == 'watch' and lim else '')
+        elif st == 'done':
+            mark, info = G + '✔' + R0, 'done · %s' % took
+        elif st == 'failed':
+            mark = Y + '✖' + R0
+            info = 'failed' + ((' · exit %s' % r['code']) if r.get('code') is not None else '') + ' · %s' % took
+        else:
+            mark, info = D + '■' + R0, '%s · %s' % (BG_STATE.get(st, st), took)
+        dim = D if st else ''
+        out.append('  %s %3s %s%-*s%s  %s%s · %s%s' % (mark, 'B%d.' % n, dim, nw, mid(r.get('name') or kind, nw), R0,
+                                                    D, kind, info, R0))
+        if kind == 'watch' and r.get('last') and not st:
+            out.append('       ' + D + 'latest: ' + r['last'][:max(0, cols - 18)] + R0)
+    return out
 
 
 def section(j, cols, W, now):
@@ -344,6 +395,7 @@ def section(j, cols, W, now):
             out.append('  ' + (D if moving else Y) + 'now: ' + doing[:cols - 9] + R0)
     else:
         out.append('  %s%d actions%s' % (D, j.get('actions', 0), R0))
+    out += bg_lines(j, cols, W, now)
     for line in j.get('log', [])[-3:]:
         out.append('  ' + D + line[:cols - 4] + R0)
     if j.get('end_msg'):
@@ -593,7 +645,7 @@ def main():
         if any(re.search(r'~ *[0-9]', l) for l in shown):
             hint = '~ = estimate between reports, moves only while work runs' + ('  ·  ' + hint if hint else '')
         if show_all:
-            hint = 'a = fold finished agents again' + ('  ·  ' + hint if hint else '')
+            hint = 'a = fold finished agents and background jobs again' + ('  ·  ' + hint if hint else '')
         if offset:
             hint = 'line %d of %d · Home = back to the top' % (offset + 1, len(lines))
         txt = '\033[H' + ''.join(l + '\033[K\n' for l in shown) + '\033[J' + \

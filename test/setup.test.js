@@ -33,17 +33,37 @@ const RAW = JSON.stringify(ORIGINAL, null, 2) + '\n';
   ok('set up: existing hooks kept first and unchanged', JSON.stringify(s.hooks.PreToolUse[0]) === JSON.stringify(ORIGINAL.hooks.PreToolUse[0]) &&
     JSON.stringify(s.hooks.SubagentStart) === JSON.stringify(ORIGINAL.hooks.SubagentStart));
   ok('set up: other settings kept', s.model === 'opus' && s.permissions.allow[0] === 'Bash(ls:*)');
-  ok('set up: our 5 hook groups added', setup.EVENTS.every(([ev]) => s.hooks[ev].some((g) => g.hooks.some((h) => h.command.includes(setup.MARK)))));
+  ok('set up: our 6 hook groups added', setup.EVENTS.every(([ev]) => s.hooks[ev].some((g) => g.hooks.some((h) => h.command.includes(setup.MARK)))));
   ok('set up: data folder 700, scripts 600, launcher 700', mode(p.data) === '700' && mode(path.join(p.data, 'hook.py')) === '600' && mode(path.join(p.data, 'progress')) === '700',
     `${mode(p.data)} ${mode(path.join(p.data, 'hook.py'))} ${mode(path.join(p.data, 'progress'))}`);
   const r2 = setup.install({ srcDir: SRC, version: '0.1.0', env, home });
   const s2 = JSON.parse(fs.readFileSync(p.settings, 'utf8'));
   ok('set up twice: no duplicates', !r2.changed && s2.hooks.Stop.length === 1);
+  ok('set up: PostToolUse only for Bash and Monitor', s2.hooks.PostToolUse.length === 1 && s2.hooks.PostToolUse[0].matcher === 'Bash|Monitor');
   const rm = setup.remove({ env, home });
   ok('remove: settings back to the exact original bytes', rm.changed && fs.readFileSync(p.settings, 'utf8') === RAW);
   ok('remove: data folder kept unless asked', fs.existsSync(p.data));
   const rm2 = setup.remove({ env, home });
   ok('remove twice: nothing to do', !rm2.changed);
+}
+
+// 1b. an older version connected without PostToolUse: set up adds only that, once, with a backup
+{
+  const home = tmpHome(); const env = {};
+  const p = setup.paths(env, home);
+  fs.mkdirSync(p.config, { recursive: true }); fs.writeFileSync(p.settings, RAW);
+  setup.install({ srcDir: SRC, version: '0.1.7', env, home });
+  const old = JSON.parse(fs.readFileSync(p.settings, 'utf8'));
+  delete old.hooks.PostToolUse;
+  fs.writeFileSync(p.settings, JSON.stringify(old, null, 2) + '\n');
+  const r = setup.install({ srcDir: SRC, version: '0.1.8', env, home });
+  const s = JSON.parse(fs.readFileSync(p.settings, 'utf8'));
+  ok('upgrade: PostToolUse added, with a backup', r.changed && r.backup && s.hooks.PostToolUse.length === 1 && s.hooks.PostToolUse[0].matcher === 'Bash|Monitor');
+  ok('upgrade: nothing else doubled', s.hooks.Stop.length === 1 && s.hooks.PreToolUse.length === 2 && s.hooks.SessionStart.length === 1);
+  const r2 = setup.install({ srcDir: SRC, version: '0.1.8', env, home });
+  ok('upgrade twice: no change', !r2.changed && JSON.parse(fs.readFileSync(p.settings, 'utf8')).hooks.PostToolUse.length === 1);
+  setup.remove({ env, home });
+  ok('upgrade then remove: settings back to the original bytes', fs.readFileSync(p.settings, 'utf8') === RAW);
 }
 
 // 2. broken settings.json is refused and left untouched

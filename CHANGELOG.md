@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8
+
+- Work Claude Code starts in the background now shows. A long command it leaves running, and a watch it sets up to follow something (Monitor), each get a row in a new BACKGROUND block, with how long it has been running.
+- When one ends, its row says how: done, failed (with the exit code), stopped, or time limit reached for a watch. A running watch also shows the latest line it reported, for example "copied 3 MB of ~139".
+- A task stays open while its background work runs, and ends when the last of it ends.
+- Finished background rows fold into one line, like finished agents. Press a to list them.
+- Set up adds one more hook (after a Bash or Monitor call). If you already use Progress Terminal, the update adds it by itself and keeps a copy of your old settings.
+
 ## 0.1.7
 
 - Arabic reads properly: letters are joined and each Arabic stretch reads right to left, with numbers inside it kept in order. Columns and bars stay where they were.

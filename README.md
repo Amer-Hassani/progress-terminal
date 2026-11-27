@@ -21,6 +21,8 @@ When Claude Code splits a task into steps, you see each step's percentage, to th
 
 Agents never report a percentage, so an agent's bar is all guess until it finishes.
 
+Commands Claude Code leaves running in the background, and watches it sets up (Monitor), get a BACKGROUND block: one row each, with how long it has been running and, at the end, whether it finished, failed (with its exit code), was stopped or reached its time limit. A running watch also shows the latest line it reported.
+
 A task without steps shows how long it has been running, how many actions Claude Code took, and what it did last, without a percentage. Downloads and long commands show the size done, the total, the speed and the time left.
 
 Finished tasks stay below the running ones, newest first, so you can scroll back over what was done. The newest 50 are kept for 7 days.
@@ -50,6 +52,7 @@ Everything stays on your machine and nothing is sent anywhere. The only network 
 - the first 60 characters of your prompt, as the task's title
 - the short description Claude Code gives each command, and the names of files it reads or edits (never the commands themselves)
 - the steps and percentages Claude Code reports
+- for each background command or watch: its short description, the task id Claude Code gives it, and how it ended; for a watch, the latest line it reported (masked like everything else)
 
 Anything that looks like a password or a token is masked. Only your user can read the folder. To clear the history, delete the `jobs` folder. The view also keeps its estimates in `view-state.json`, so they don't start over when it restarts.
 
@@ -81,7 +84,7 @@ Claude Code can run in VS Code's Claude panel or in any terminal, as long as VS 
 
 Use the mouse wheel, the arrow keys, Page Up and Page Down, or Home and End.
 
-When a task has many agents, the finished ones fold into one line ("✔ 52 agents done") and only the running ones get a row each. Press a to list the finished ones, and a again to fold them. Agents that stopped without a report (stopped by hand, or lost in a restart) are closed too, and counted separately.
+When a task has many agents, the finished ones fold into one line ("✔ 52 agents done") and only the running ones get a row each. Finished background jobs fold the same way. Press a to list the finished ones, and a again to fold them. Agents that stopped without a report (stopped by hand, or lost in a restart) are closed too, and counted separately.
 
 Made by [Hassani Labs](https://hassanilabs.com). Not affiliated with Anthropic. Claude and Claude Code are trademarks of Anthropic.
 

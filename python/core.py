@@ -5,9 +5,11 @@ Claude Code hooks (hook.py) create and end jobs; the `progress` command adds ste
 Everything stays on this machine. Python 3.9+.
 """
 import fcntl
+import glob
 import json
 import os
 import re
+import tempfile
 import time
 
 # The code lives in the data folder the extension set up (default ~/.claude/progress-terminal).
@@ -128,11 +130,121 @@ def pid_alive(pid):
 
 
 def busy(job):
-    """Something still runs for this job: a `progress run/dl` process or an agent (agents count for 2 h at most)."""
+    """Something still runs for this job: a `progress run/dl` process, an agent (agents count for 2 h at most) or a
+    background command or watch started by Claude Code."""
     if any(pid_alive(p) for p in job.get('pids', [])):
         return True
     now = time.time()
+    if any(bg_open(r, now) for r in job.get('bg', [])):
+        return True
     return any(not a.get('done') and now - a.get('t0', now) < 2 * 3600 for a in job.get('agents', []))
+
+
+# ---- background jobs: Bash run_in_background and Monitor -------------------------------------------------------
+# Claude Code writes what a background command (or a watch) prints to <temp>/claude-<uid>/<project>/<session>/tasks/
+# <task id>.output and, when it ends, a last line: "[exited with code N]" or "[killed]". A watch that reaches its
+# time limit is killed. The hooks record each one as a row (job['bg']); the rows are settled from that file.
+BG_MAX = 6 * 3600            # a background command with no readable end counts as running for 6 h at most
+BG_TAIL = 4096
+_ID = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+_END = re.compile(r'\n?\[(?:exited with code (-?\d+|unknown)|killed)\]\s*$')
+
+
+def bg_open(r, now=None):
+    now = now or time.time()
+    if r.get('state'):
+        return False
+    limit = BG_MAX
+    if r.get('kind') == 'watch' and r.get('timeout'):
+        limit = r['timeout'] / 1000.0 + 300
+    return now - r.get('t0', now) < limit
+
+
+def bg_find_output(sid, tid, slug=''):
+    """The output file of background task `tid` in session `sid`, or None."""
+    if not tid or not _ID.match(str(tid)) or not sid or not _ID.match(str(sid)):
+        return None
+    uid = 'claude-%d' % os.getuid()
+    roots = []
+    for r in (os.environ.get('CLAUDE_CODE_TMPDIR'), '/private/tmp', '/tmp', tempfile.gettempdir()):
+        if r and r not in roots:
+            roots.append(r)
+    for r in roots:
+        if slug and '/' not in slug and slug not in ('.', '..'):
+            p = os.path.join(r, uid, slug, sid, 'tasks', tid + '.output')
+            if os.path.exists(p):
+                return p
+        for p in glob.glob(os.path.join(glob.escape(os.path.join(r, uid)), '*', sid, 'tasks', tid + '.output')):
+            return p
+    return None
+
+
+def _tail(path):
+    with open(path, 'rb') as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - BG_TAIL))
+        return f.read().decode('utf-8', 'replace'), size
+
+
+def bg_close(r, state, code=None, t1=None):
+    r['state'] = state
+    if code is not None:
+        r['code'] = code
+    r['t1'] = t1 or time.time()
+
+
+def bg_refresh(job, now=None):
+    """Read the output files of the job's open background rows; close the ones that ended. True if anything changed."""
+    now = now or time.time()
+    changed = False
+    for r in job.get('bg', []):
+        if r.get('state'):
+            continue
+        if not r.get('out') and r.get('id'):
+            p = bg_find_output(job.get('sid'), r['id'], r.get('slug', ''))
+            if p:
+                r['out'] = p
+                changed = True
+        if not r.get('out'):
+            if not bg_open(r, now):
+                bg_close(r, 'ended', t1=now)
+                changed = True
+            continue
+        try:
+            text, size = _tail(r['out'])
+            mtime = os.path.getmtime(r['out'])
+        except OSError:
+            # the file was there and is gone (Claude Code cleaned up): the job is over, how it ended is unknown
+            bg_close(r, 'ended', t1=now)
+            changed = True
+            continue
+        m = _END.search(text)
+        body = text[:m.start()] if m else text
+        if r.get('kind') == 'watch':
+            last = next((l.strip() for l in reversed(body.splitlines()) if l.strip()), '')
+            if last and short(last, 200) != r.get('last'):
+                r['last'] = short(last, 200)
+                changed = True
+        if size != r.get('size'):
+            r['size'] = size
+            r['seen_t'] = now  # the output grew: proof of work
+            changed = True
+        if m:
+            if m.group(1) is None:  # [killed]: a watch at its time limit expired, anything else was stopped
+                lim = (r.get('timeout') or 0) / 1000.0
+                expired = r.get('kind') == 'watch' and lim and mtime - r.get('t0', mtime) >= lim - 5
+                bg_close(r, 'expired' if expired else 'stopped', t1=mtime)
+            elif m.group(1) == 'unknown':
+                bg_close(r, 'ended', t1=mtime)
+            else:
+                code = int(m.group(1))
+                bg_close(r, 'done' if code == 0 else 'failed', code, t1=mtime)
+            changed = True
+        elif not bg_open(r, now):
+            bg_close(r, 'ended', t1=now)
+            changed = True
+    return changed
 
 
 def finish(job, msg=None):
@@ -152,15 +264,18 @@ def prune():
     too_many = {j['id'] for j in finished[:-KEEP_FINISHED]} if len(finished) > KEEP_FINISHED else set()
     for j in jobs:
         if j['id'] in too_many or j.get('end') and now - j['end'] > KEEP_DAYS * 86400 \
-                or not j.get('end') and now - j.get('updated', now) > STALE:
+                or not j.get('end') and now - j.get('updated', now) > STALE and not any(bg_open(r, now) for r in j.get('bg', [])):
             try:
                 os.remove(path_of(j['id']))
             except OSError:
                 pass
         elif not j.get('end'):
             j['pids'] = [p for p in j.get('pids', []) if pid_alive(p)]
+            dirty = bg_refresh(j, now) if any(not r.get('state') for r in j.get('bg', [])) else False
             if j.get('waiting') and not busy(j):
                 finish(j)
+                dirty = True
+            if dirty:
                 save(j)
 
 

@@ -5,7 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const EVENTS = [['SessionStart', null], ['UserPromptSubmit', null], ['PreToolUse', '.*'], ['SubagentStop', null], ['Stop', null]];
+const EVENTS = [['SessionStart', null], ['UserPromptSubmit', null], ['PreToolUse', '.*'], ['PostToolUse', 'Bash|Monitor'],
+  ['SubagentStop', null], ['Stop', null]];
 const MARK = 'progress-terminal/hook.py';
 const PY_FILES = ['core.py', 'hook.py', 'progress.py', 'view.py', 'progress'];
 const PYTHONS = ['/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'];
@@ -89,7 +90,11 @@ function install(opts) {
   const s = readSettings(p.settings);            // throws (and touches nothing) if unreadable
   copyFiles(srcDir, p.data);
   fs.writeFileSync(path.join(p.data, 'VERSION'), version, { mode: 0o600 });
-  if (isInstalled(s.obj)) return { changed: false, backup: null, message: 'Already connected to Claude Code. Scripts updated.' };
+  const upgrade = isInstalled(s.obj);
+  // an earlier version is connected: add only the hook events it did not have yet (0.1.8: PostToolUse)
+  const missing = EVENTS.filter(([ev]) => !(Array.isArray((s.obj.hooks || {})[ev]) &&
+    s.obj.hooks[ev].some((g) => Array.isArray(g.hooks) && g.hooks.some(ours))));
+  if (upgrade && !missing.length) return { changed: false, backup: null, message: 'Already connected to Claude Code. Scripts updated.' };
   let backup = null;
   if (s.exists) {
     backup = `${p.settings}.backup-progress-terminal-${Date.now()}`;
@@ -98,11 +103,12 @@ function install(opts) {
   const obj = s.obj;
   obj.hooks = obj.hooks || {};
   const entry = { type: 'command', command: hookCommand(p.data), timeout: 5 };
-  for (const [ev, matcher] of EVENTS) {
+  for (const [ev, matcher] of missing) {
     obj.hooks[ev] = Array.isArray(obj.hooks[ev]) ? obj.hooks[ev] : [];
-    obj.hooks[ev].push(matcher ? { matcher, hooks: [entry] } : { hooks: [entry] });
+    obj.hooks[ev].push(matcher ? { matcher, hooks: [{ ...entry }] } : { hooks: [{ ...entry }] });
   }
   writeSettings(p.settings, obj);
+  if (upgrade) return { changed: true, backup, message: 'Already connected to Claude Code. Scripts updated, and background jobs are now shown.' };
   return { changed: true, backup, message: 'Connected. New Claude Code sessions will show their progress here.' };
 }
 
