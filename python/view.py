@@ -271,7 +271,7 @@ def bg_lines(j, cols, W, now):
         kind = 'watch' if r.get('kind') == 'watch' else 'command'
         if r.get('agent') or r.get('agent_type'):  # started by an agent: say which one
             who = next((a['name'] for a in j.get('agents', []) if r.get('agent') and a.get('id') == r['agent']), None)
-            kind += ' · agent ' + mid(who or r.get('agent_type') or 'agent', 24)
+            kind += ' · agent ' + mid(who or r.get('agent_type') or 'agent', 16)
         st = r.get('state') or ('not finished' if ended else '')
         took = fmt((r.get('t1') or ended or now) - r.get('t0', now))
         if not st:

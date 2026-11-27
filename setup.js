@@ -71,7 +71,9 @@ function status(opts = {}) {
   return { installed, dataExists: fs.existsSync(path.join(p.data, 'hook.py')), ...p };
 }
 
-const stamp = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+const pad = (n) => String(n).padStart(2, '0');
+// local date and time, day first, sortable within a day: 27-11-2026_15-49-21
+const stamp = (d = new Date()) => `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
 
 // Copy the scripts in. A script that differs from the incoming one (edited by hand, or an older version) is first
 // saved to backups/<date-time>/. The local/ folder (your own additions) is never touched.
