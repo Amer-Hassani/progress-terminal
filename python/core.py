@@ -37,8 +37,11 @@ def mask(s):
     return s
 
 
+CONTROL = re.compile(r'[\x00-\x1f\x7f-\x9f]')  # terminal control characters (C0, DEL, C1): never stored
+
+
 def short(s, n=60):
-    s = mask(' '.join((s or '').split()))
+    s = mask(' '.join(CONTROL.sub(' ', s or '').split()))
     return s if len(s) <= n else s[:n - 1] + '…'
 
 

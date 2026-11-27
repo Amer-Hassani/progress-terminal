@@ -269,9 +269,10 @@ def bg_lines(j, cols, W, now):
         if fold and r in fin:
             continue
         kind = 'watch' if r.get('kind') == 'watch' else 'command'
+        label = kind
         if r.get('agent') or r.get('agent_type'):  # started by an agent: say which one
             who = next((a['name'] for a in j.get('agents', []) if r.get('agent') and a.get('id') == r['agent']), None)
-            kind += ' · agent ' + mid(who or r.get('agent_type') or 'agent', 16)
+            label += ' · agent ' + mid(who or r.get('agent_type') or 'agent', 16)
         st = r.get('state') or ('not finished' if ended else '')
         took = fmt((r.get('t1') or ended or now) - r.get('t0', now))
         if not st:
@@ -287,13 +288,14 @@ def bg_lines(j, cols, W, now):
             mark, info = D + '■' + R0, '%s · %s' % (BG_STATE.get(st, st), took)
         dim = D if st else ''
         out.append('  %s %3s %s%-*s%s  %s%s · %s%s' % (mark, 'B%d.' % n, dim, nw, mid(r.get('name') or kind, nw), R0,
-                                                    D, kind, info, R0))
+                                                    D, label, info, R0))
         if kind == 'watch' and r.get('last') and not st:
             out.append('       ' + D + 'latest: ' + r['last'][:max(0, cols - 18)] + R0)
     return out
 
 
 def section(j, cols, W, now):
+    j = scrub(j)
     out = []
     steps = list(j.get('steps', []))
     plain = len(steps)
@@ -407,6 +409,7 @@ def section(j, cols, W, now):
 
 
 ANSI = re.compile(r'\033\[[0-9;?]*[A-Za-z]')
+SGR = re.compile(r'\033\[[0-9;]*m')  # the only escape codes the view puts inside a line: colours
 
 
 def clip(line, cols):
@@ -416,11 +419,13 @@ def clip(line, cols):
         return ''
     out, n, i = [], 0, 0
     while i < len(line):
-        m = ANSI.match(line, i)
+        m = SGR.match(line, i)
         if m:
             out.append(m.group())
             i = m.end()
             continue
+        if core.CONTROL.match(line[i]):
+            line = line[:i] + ' ' + line[i + 1:]  # last guard: only colour codes are ever sent to the terminal
         cw = 0 if _mark(line[i]) else 2 if unicodedata.east_asian_width(line[i]) in ('W', 'F') else 1
         if n + cw > cols:
             n = cols
@@ -538,6 +543,19 @@ def visual(line):
         last = m.end()
     parts.append(_visual(line[last:]))
     return ''.join(parts)
+
+
+def scrub(o):
+    """Every text a job file holds, with terminal control characters turned into spaces. Job files may come from
+    older versions or other programs, so nothing in them can reach the screen as a control code: only the view's
+    own colour codes do."""
+    if isinstance(o, str):
+        return core.CONTROL.sub(' ', o)
+    if isinstance(o, list):
+        return [scrub(x) for x in o]
+    if isinstance(o, dict):
+        return {k: scrub(v) for k, v in o.items()}
+    return o
 
 
 def safe_section(j, cols, W, now):

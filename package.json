@@ -2,7 +2,7 @@
   "name": "progress-terminal",
   "displayName": "Progress Terminal for Claude Code",
   "description": "See what Claude Code is doing, live: one terminal shows every task's steps and progress, updated every second, without moving your cursor.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "hassani-labs",
   "license": "MIT",
   "icon": "icon.png",
@@ -63,6 +63,6 @@
   },
   "scripts": {
     "vscode:uninstall": "node ./uninstall.js",
-    "test": "node test/setup.test.js && node test/extension.test.js && node test/view.test.js && node test/agents.test.js && node test/background.test.js && node test/local.test.js"
+    "test": "node test/setup.test.js && node test/extension.test.js && node test/view.test.js && node test/agents.test.js && node test/background.test.js && node test/local.test.js && node test/escape.test.js"
   }
 }

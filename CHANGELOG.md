@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10
+
+- Text from commands, watches, prompts and task names can no longer send control codes to your terminal. They are removed when the text is saved and again when it is shown, so task files from earlier versions are safe too. Earlier versions were affected.
+- A watch started by an agent shows its time limit and latest line again.
+
 ## 0.1.9
 
 - Background work started by an agent shows too: its commands and watches get rows in the BACKGROUND block, marked with the agent that started them.

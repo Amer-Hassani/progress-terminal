@@ -168,6 +168,13 @@ import re, view
 view.show_all = True
 j = core.all_jobs()[-1]
 print('\n'.join(re.sub(r'\[[0-9;]*m', '', l) for l in view.section(j, 150, 50, time.time())))`);
+  const live = py(t, String.raw`
+import re, view
+j = core.all_jobs()[-1]
+for r in j['bg']: r.pop('state', None); r.pop('t1', None)
+print('\n'.join(re.sub(r'\x1b\[[0-9;]*m', '', l) for l in view.section(j, 150, 50, time.time())))`);
+  ok("agent: a running agent's watch shows its time limit and latest line", /B2\. Agent watch.*watch · agent Move files · running · \d+s of 20s/.test(live.stdout) &&
+    live.stdout.includes('latest: sub event 2'), live.stdout + live.stderr);
   ok('agent: the row names the agent', /B1\. Agent copy.*command · agent Move files · failed · exit 4/.test(v.stdout), v.stdout + v.stderr);
 }
 
