@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import core  # noqa: E402
 
 G, Y, D, B, R0 = '\033[92m', '\033[93m', '\033[2m', '\033[1m', '\033[0m'
+CY = '\033[96m'  # an agent's model and effort: its own colour, so it stands out from the grey details
 KEYS = {b'\x1b[A': -1, b'\x1bOA': -1, b'\x1b[B': 1, b'\x1bOB': 1, b'k': -1, b'j': 1}
 PAGE = {b'\x1b[5~': -1, b'\x1b[6~': 1, b' ': 1}
 _tty = None
@@ -407,10 +408,12 @@ def section(j, cols, W, now):
                 detail = 'working · %s' % fmt(now - since)
             if ended and not done:
                 detail = 'not finished' + (' · ' + detail.replace('(not finished)', '').strip() if detail.strip(' ()') and 'not finished' not in detail else '')
-            if s.get('agent'):
-                detail = ' · '.join(x for x in (s.get('spec'), detail) if x)
-            if detail and (not done or s.get('stopped')):
-                out.append('       ' + D + detail[:cols - 10] + R0)
+            spec_txt = s.get('spec') if s.get('agent') else ''
+            if (detail or spec_txt) and (not done or s.get('stopped')):
+                room = max(0, cols - 10)
+                head = (spec_txt or '')[:room]
+                rest = detail[:max(0, room - len(head) - (3 if head and detail else 0))] if detail else ''
+                out.append('       ' + (CY + head + R0 if head else '') + (D + (' · ' if head and rest else '') + rest + R0 if rest else ''))
             if s.get('tasks') and not done:
                 out.append('       ' + D + s['tasks'][:cols - 10] + R0)
             if s.get('agent') and not done and not ended:

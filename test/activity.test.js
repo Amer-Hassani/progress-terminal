@@ -31,11 +31,12 @@ for d in steps['calls']:
 core.save = real_save
 j = [x for x in core.all_jobs() if not x.get('end')][-1] if any(not x.get('end') for x in core.all_jobs()) else core.all_jobs()[-1]
 strip = lambda l: re.sub(r'\x1b\[[0-9;]*m', '', l)
-out = {'writes': writes, 'job': j, 'render': {}}
+out = {'writes': writes, 'job': j, 'render': {}, 'raw': {}}
 for cols in steps.get('cols', [120]):
     W = max(20, min(50, cols - 40))
     lines = view.section(j, cols, W, time.time() + steps.get('later', 0))
     out['render'][str(cols)] = [strip(view.visual(view.clip(l, cols - 1))) for l in lines]
+    out['raw'][str(cols)] = [view.visual(view.clip(l, cols - 1)) for l in lines]
 print(json.dumps(out))
 `;
 
@@ -139,6 +140,20 @@ const W = (r, cols) => (r.render[String(cols)] || []);
   const r = run(t, [launch('Quick look', 'general-purpose'), A('d1', 'general-purpose', pre('Read', { file_path: '/a/b' })),
     { hook_event_name: 'SubagentStop', agent_id: 'd1', agent_type: 'general-purpose', background_tasks: [] }], { cols: [120] });
   ok('finished agent: no "now:" line', !W(r, 120).some((l) => /now: Read/.test(l)), W(r, 120).join('\n'));
+}
+
+
+// 6. the model and effort line has its own colour (cyan), apart from the grey details
+{
+  const t = fresh();
+  meta(t, 'm1', { agentType: 'tech-lead', description: 'Check the plan' });
+  const r = run(t, [launch('Check the plan', 'tech-lead'), A('m1', 'tech-lead', pre('Read', { file_path: '/a/plan.md' }))], { cols: [120, 50] });
+  for (const c of ['120', '50']) {
+    const raw = (r.raw && r.raw[c]) || [];
+    const line = raw.find((l) => /^ {7}\x1b\[96m/.test(l) && /medium effort/.test(l)) || '';
+    ok(`model line at ${c} columns: model and effort in cyan`, /^ {7}\x1b\[96m[^\x1b]*medium effort/.test(line), JSON.stringify(raw));
+    ok(`model line at ${c} columns: no line wider than the terminal`, (r.render[c] || []).every((l) => [...l].length <= Number(c) - 1), (r.render[c] || []).join('\n'));
+  }
 }
 
 console.log(`--- ${pass} passed, ${fail} failed`);
