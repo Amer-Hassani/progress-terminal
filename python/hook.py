@@ -13,7 +13,9 @@ Background jobs (Bash with run_in_background, Monitor) get a row each in job['bg
 PostToolUse gives it its task id, and core.bg_refresh settles it from Claude Code's output file for that task.
 Stop/SubagentStop (background_tasks) and task notifications (UserPromptSubmit) fill in what the file can't tell.
 
-Only the main session counts: calls that carry agent_type (subagents) are skipped.
+Only the main session's calls count, with one exception: an Agent launched by an agent adds a nested row (↳) under
+the same job, closed by its own SubagentStop (matched through Claude Code's meta.json: parentAgentId + description)
+or when its parent row closes.
 """
 import json
 import os
@@ -174,7 +176,9 @@ def main():
         with core.Lock():
             j = core.live_job(sid)
             if j:
-                agents_stopped(j, d, ev)
+                if not nested_stopped(j, d):
+                    agents_stopped(j, d, ev)
+                close_orphans(j)
                 bg_stopped(j, d, ev)
                 j['ev_t'] = time.time()
                 if j.get('waiting') and not core.busy(j):
@@ -182,6 +186,19 @@ def main():
                 core.save(j)
         return
     if d.get('agent_type'):
+        # inside an agent: only its own Agent launches count, shown as nested rows (↳) under the main job
+        if ev == 'PreToolUse' and d.get('tool_name') == 'Agent':
+            ti = d.get('tool_input') or {}
+            with core.Lock():
+                j = core.current_job(sid) or core.live_job(sid)
+                if j:
+                    a = {'name': '↳ ' + core.short(ti.get('description') or 'agent', 38), 'done': False,
+                         't0': time.time(), 'nested': True, 'parent': str(d.get('agent_id') or ''),
+                         'desc': core.short(ti.get('description') or 'agent', 40)}
+                    a.update(agent_spec(ti, d.get('cwd') or '', {}))
+                    j.setdefault('agents', []).append(a)
+                    j['ev_t'] = time.time()
+                    core.save(j)
         return
     if ev == 'PreToolUse':
         tool = d.get('tool_name') or ''
@@ -250,12 +267,57 @@ def main():
                 j['tool'] = None
                 j['ev_t'] = time.time()
                 agents_stopped(j, d, ev)
+                close_orphans(j)
                 bg_stopped(j, d, ev)
                 if core.busy(j):
                     j['waiting'] = True
                 else:
                     core.finish(j)
                 core.save(j)
+
+
+def agent_meta(aid, d):
+    """Claude Code's own record of an agent (description, parentAgentId, spawnDepth), or {}."""
+    if not aid or not re.match(r'^[A-Za-z0-9_-]+$', str(aid)):
+        return {}
+    paths = []
+    atp = d.get('agent_transcript_path') or ''
+    if atp.endswith('.jsonl'):
+        paths.append(atp[:-6] + '.meta.json')
+    tp = d.get('transcript_path') or ''
+    if tp.endswith('.jsonl'):
+        paths.append(os.path.join(tp[:-6], 'subagents', 'agent-%s.meta.json' % aid))
+    for p in paths:
+        try:
+            return json.load(open(p, encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+    return {}
+
+
+def nested_stopped(j, d):
+    """SubagentStop of an agent launched by another agent: close its ↳ row. True when it was such an agent."""
+    gone = d.get('agent_id')
+    meta = agent_meta(gone, d)
+    parent = meta.get('parentAgentId')
+    if not parent:
+        return False
+    open_rows = [a for a in j.get('agents', []) if a.get('nested') and not a.get('done')]
+    hit = next((a for a in open_rows if a.get('id') == gone), None) \
+        or next((a for a in open_rows if not a.get('id') and a.get('parent') == parent and
+                 a.get('desc') == core.short(meta.get('description') or 'agent', 40)), None) \
+        or next((a for a in open_rows if not a.get('id') and a.get('parent') == parent), None)
+    if hit:
+        hit.update(done=True, t1=time.time(), id=gone)
+    return True
+
+
+def close_orphans(j):
+    """A nested row whose parent agent has finished is finished too."""
+    done_ids = {a.get('id') for a in j.get('agents', []) if a.get('done') and a.get('id')}
+    for a in j.get('agents', []):
+        if a.get('nested') and not a.get('done') and a.get('parent') in done_ids:
+            a.update(done=True, t1=time.time())
 
 
 BG_TOOLS = ('Bash', 'Monitor')
@@ -377,7 +439,7 @@ def bg_notified(sid, prompt):
 
 
 GRACE = 30
-DEAD = ('completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled', 'error')
+DEAD =('completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled', 'error')
 
 
 def agents_stopped(j, d, ev):
@@ -406,6 +468,7 @@ def agents_stopped(j, d, ev):
         for a in rows:
             if a.get('id') == t.get('id'):
                 a['seen'] = True
+    rows = [a for a in rows if not a.get('nested')]  # nested rows are matched by nested_stopped, never guessed here
     if gone:
         hit = [a for a in rows if a.get('id') == gone]
         if not hit:
@@ -419,6 +482,8 @@ def agents_stopped(j, d, ev):
         for a in rows:
             if a.get('done') or a.get('id') in alive or now - a.get('t0', now) <= GRACE:
                 continue
+            if a.get('nested'):
+                continue  # a nested agent never shows in the main list; it closes on its own stop or its parent's
             if ev == 'Stop':
                 a.update(done=True, t1=now, stopped=not a.get('msg'))
             elif a.get('seen') and not a.get('msg'):

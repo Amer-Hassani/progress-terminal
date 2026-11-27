@@ -218,5 +218,32 @@ j = core.load(sys.argv[2]); print('\\n'.join(re.sub(r'\\x1b\\[[0-9;]*m', '', l) 
   ok('spec: effort from the general setting', row(t, 'P4').model === 'Haiku' && row(t, 'P4').effort === 'high', JSON.stringify(row(t, 'P4')));
 }
 
+// 9. agents launched by an agent: a nested row each, closed by their own stop, never by a main-session guess
+{
+  const t = fresh();
+  const tr = path.join(t.home, 'main.jsonl'); fs.writeFileSync(tr, '');
+  const sub = path.join(t.home, 'main', 'subagents'); fs.mkdirSync(sub, { recursive: true });
+  const meta = (id, parent, desc) => fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ parentAgentId: parent, description: desc }));
+  hook(t, { hook_event_name: 'PreToolUse', tool_name: 'Agent', transcript_path: tr, tool_input: { description: 'Lead', model: 'sonnet', effort: 'medium' } });
+  hook(t, { hook_event_name: 'Stop', transcript_path: tr, background_tasks: [task('L1', 'Lead')] }); // the lead runs in the background: its row learns id L1
+  const kid = (d) => hook(t, { hook_event_name: 'PreToolUse', agent_type: 'general-purpose', agent_id: 'L1', tool_name: 'Agent',
+    tool_input: { description: d, model: 'haiku', effort: 'high' } });
+  kid('Fetch A'); kid('Fetch B'); kid('Fetch C');
+  hook(t, { hook_event_name: 'PreToolUse', agent_type: 'general-purpose', agent_id: 'L1', tool_name: 'WebSearch', tool_input: {} });
+  const rows = job(t).agents;
+  ok('nested: one row per launched fetcher, others ignored', rows.length === 4, JSON.stringify(rows.map((a) => a.name)));
+  ok('nested: row marked, parent kept, model + effort', row(t, '↳ Fetch B').nested === true && row(t, '↳ Fetch B').parent === 'L1'
+    && row(t, '↳ Fetch B').model === 'Haiku' && row(t, '↳ Fetch B').effort === 'high');
+  meta('K2', 'L1', 'Fetch B');
+  hook(t, { hook_event_name: 'SubagentStop', agent_id: 'K2', agent_type: 'general-purpose', transcript_path: tr });
+  ok('nested: its own stop ticks the right row', row(t, '↳ Fetch B').done === true && row(t, '↳ Fetch A').done === false);
+  ok('nested: a nested stop never closes the lead', row(t, 'Lead').done === false);
+  age(t, 120);
+  hook(t, { hook_event_name: 'Stop', transcript_path: tr, background_tasks: [task('L1', 'Lead')] });
+  ok('nested: main Stop leaves running fetchers open while the lead runs', row(t, '↳ Fetch A').done === false && row(t, '↳ Fetch C').done === false);
+  hook(t, { hook_event_name: 'SubagentStop', agent_id: 'L1', transcript_path: tr, background_tasks: [] });
+  ok('nested: the lead stops, its fetchers close with it', row(t, 'Lead').done === true && row(t, '↳ Fetch A').done === true && row(t, '↳ Fetch C').done === true);
+}
+
 console.log(`--- ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
