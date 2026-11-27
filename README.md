@@ -21,7 +21,7 @@ When Claude Code splits a task into steps, you see each step's percentage, to th
 
 Agents never report a percentage, so an agent's bar is all guess until it finishes.
 
-Commands Claude Code leaves running in the background, and watches it sets up (Monitor), get a BACKGROUND block: one row each, with how long it has been running and, at the end, whether it finished, failed (with its exit code), was stopped or reached its time limit. A running watch also shows the latest line it reported.
+Commands Claude Code leaves running in the background, and watches it sets up (Monitor), get a BACKGROUND block: one row each (rows started by an agent name the agent), with how long it has been running and, at the end, whether it finished, failed (with its exit code), was stopped or reached its time limit. A running watch also shows the latest line it reported.
 
 A task without steps shows how long it has been running, how many actions Claude Code took, and what it did last, without a percentage. Downloads and long commands show the size done, the total, the speed and the time left.
 
@@ -43,7 +43,7 @@ To run it again later, open the Command Palette and run "Progress Terminal: Set 
 
 "Progress Terminal: Remove from Claude Code" in the Command Palette takes out only what Set up added. Your other settings stay as they were, and the file is written back with 2-space indentation.
 
-Uninstalling the extension does the same and also deletes `~/.claude/progress-terminal/`. If that folder is ever gone while the hooks are still in your settings, the hooks do nothing.
+Uninstalling the extension does the same and also deletes `~/.claude/progress-terminal/`, except your own `local` folder. If that folder is ever gone while the hooks are still in your settings, the hooks do nothing.
 
 ## What it stores
 
@@ -73,6 +73,12 @@ At the start of each session, Claude Code gets one line about the `progress` com
 `tasks` and `task` list and tick the jobs of one agent under that agent's row.
 
 You can use the same command yourself, in any script.
+
+## Your own additions
+
+Changes made by hand to the scripts are replaced by the next update. The old copies are saved in `backups/` first, with the date and time. To keep an addition for good, put it in `~/.claude/progress-terminal/local/hook_local.py`. Updates never touch the `local` folder, and uninstalling keeps it.
+
+The file can define one function, `on_event(event, data, job)`. It is called when a session starts, when you send a prompt, and before each tool call of the main session, where `job` is the task (keep your own values in `job['local']`). Text it returns is passed to Claude Code as extra context. The file is used only when it belongs to you and nobody else can write to it or its folder (`chmod 600` for the file, `700` for the folder). Errors in it go to `hook-errors.log` and never stop the hook.
 
 ## Where it works
 

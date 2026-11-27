@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9
+
+- Background work started by an agent shows too: its commands and watches get rows in the BACKGROUND block, marked with the agent that started them.
+- Agents started by another agent get their own row (↳) under the same task, and close when they finish or when the agent that started them finishes.
+- Your own additions survive updates. Put them in `local/hook_local.py` inside the Progress Terminal folder: updates and uninstalling never touch that folder. The file is used only when it belongs to you and nobody else can change it, and a mistake in it is written to `hook-errors.log` instead of stopping anything.
+- Before an update replaces a script that was changed by hand, the old copy is saved in `backups/` with the date and time.
+
 ## 0.1.8
 
 - Work Claude Code starts in the background now shows. A long command it leaves running, and a watch it sets up to follow something (Monitor), each get a row in a new BACKGROUND block, with how long it has been running.

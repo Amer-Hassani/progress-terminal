@@ -71,14 +71,32 @@ function status(opts = {}) {
   return { installed, dataExists: fs.existsSync(path.join(p.data, 'hook.py')), ...p };
 }
 
+const stamp = (d = new Date()) => d.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+
+// Copy the scripts in. A script that differs from the incoming one (edited by hand, or an older version) is first
+// saved to backups/<date-time>/. The local/ folder (your own additions) is never touched.
 function copyFiles(srcDir, data) {
   fs.mkdirSync(data, { recursive: true, mode: 0o700 });
   fs.chmodSync(data, 0o700);
+  let saved = null;
   for (const f of PY_FILES) {
     const to = path.join(data, f);
+    const incoming = fs.readFileSync(path.join(srcDir, f));
+    let old = null;
+    try { old = fs.readFileSync(to); } catch { /* not there yet */ }
+    if (old && !old.equals(incoming)) {
+      if (!saved) {
+        saved = path.join(data, 'backups', stamp());
+        for (let n = 2; fs.existsSync(saved); n++) saved = path.join(data, 'backups', `${stamp()}-${n}`);
+        fs.mkdirSync(saved, { recursive: true, mode: 0o700 });
+        fs.chmodSync(path.join(data, 'backups'), 0o700);
+      }
+      fs.writeFileSync(path.join(saved, f), old, { mode: 0o600 });
+    }
     fs.copyFileSync(path.join(srcDir, f), to);
     fs.chmodSync(to, f === 'progress' ? 0o700 : 0o600);
   }
+  return saved;
 }
 
 // Set up: copy the scripts, back up settings.json, add our hook groups. Returns a short message.
@@ -88,13 +106,13 @@ function install(opts) {
   if (!findPython(opts.env)) throw new Error('Progress Terminal needs Python 3. Install it, then run "Progress Terminal: Set up Claude Code" again.');
   const p = paths(opts.env, opts.home);
   const s = readSettings(p.settings);            // throws (and touches nothing) if unreadable
-  copyFiles(srcDir, p.data);
+  const saved = copyFiles(srcDir, p.data);
   fs.writeFileSync(path.join(p.data, 'VERSION'), version, { mode: 0o600 });
   const upgrade = isInstalled(s.obj);
   // an earlier version is connected: add only the hook events it did not have yet (0.1.8: PostToolUse)
   const missing = EVENTS.filter(([ev]) => !(Array.isArray((s.obj.hooks || {})[ev]) &&
     s.obj.hooks[ev].some((g) => Array.isArray(g.hooks) && g.hooks.some(ours))));
-  if (upgrade && !missing.length) return { changed: false, backup: null, message: 'Already connected to Claude Code. Scripts updated.' };
+  if (upgrade && !missing.length) return { changed: false, backup: null, saved, message: 'Already connected to Claude Code. Scripts updated.' };
   let backup = null;
   if (s.exists) {
     backup = `${p.settings}.backup-progress-terminal-${Date.now()}`;
@@ -108,8 +126,8 @@ function install(opts) {
     obj.hooks[ev].push(matcher ? { matcher, hooks: [{ ...entry }] } : { hooks: [{ ...entry }] });
   }
   writeSettings(p.settings, obj);
-  if (upgrade) return { changed: true, backup, message: 'Already connected to Claude Code. Scripts updated, and background jobs are now shown.' };
-  return { changed: true, backup, message: 'Connected. New Claude Code sessions will show their progress here.' };
+  if (upgrade) return { changed: true, backup, saved, message: 'Already connected to Claude Code. Scripts updated, and background jobs are now shown.' };
+  return { changed: true, backup, saved, message: 'Connected. New Claude Code sessions will show their progress here.' };
 }
 
 // Remove: take out only our hook entries; optionally delete the data folder.
@@ -135,8 +153,12 @@ function remove(opts = {}) {
       changed = true;
     }
   }
-  if (opts.deleteData && fs.existsSync(p.data)) fs.rmSync(p.data, { recursive: true, force: true });
+  if (opts.deleteData && fs.existsSync(p.data)) {
+    // everything Set up made goes; your own local/ folder stays
+    for (const n of fs.readdirSync(p.data)) if (n !== 'local') fs.rmSync(path.join(p.data, n), { recursive: true, force: true });
+    if (!fs.existsSync(path.join(p.data, 'local'))) fs.rmSync(p.data, { recursive: true, force: true });
+  }
   return { changed, message: changed ? 'Disconnected from Claude Code.' : 'It was not connected to Claude Code.' };
 }
 
-module.exports = { paths, status, install, remove, hookCommand, findPython, EVENTS, MARK };
+module.exports = { paths, status, install, remove, hookCommand, findPython, EVENTS, MARK, PY_FILES };

@@ -66,6 +66,30 @@ const RAW = JSON.stringify(ORIGINAL, null, 2) + '\n';
   ok('upgrade then remove: settings back to the original bytes', fs.readFileSync(p.settings, 'utf8') === RAW);
 }
 
+// 1c. updates: your local/ folder is never touched; a changed script is saved to backups/ before it is replaced
+{
+  const home = tmpHome(); const env = {};
+  const p = setup.paths(env, home);
+  setup.install({ srcDir: SRC, version: '0.1.8', env, home });
+  fs.mkdirSync(path.join(p.data, 'local'), { mode: 0o700 });
+  const mine = 'def on_event(event, data, job):\n    return None\n';
+  fs.writeFileSync(path.join(p.data, 'local', 'hook_local.py'), mine, { mode: 0o600 });
+  const edited = fs.readFileSync(path.join(p.data, 'hook.py'), 'utf8') + '\n# edited by hand\n';
+  fs.writeFileSync(path.join(p.data, 'hook.py'), edited);
+  const r = setup.install({ srcDir: SRC, version: '0.1.9', env, home });
+  ok('update: local/ file untouched', fs.readFileSync(path.join(p.data, 'local', 'hook_local.py'), 'utf8') === mine &&
+    mode(path.join(p.data, 'local', 'hook_local.py')) === '600');
+  ok('update: the edited hook.py saved to backups/ first, then replaced', r.saved && fs.readFileSync(path.join(r.saved, 'hook.py'), 'utf8') === edited &&
+    fs.readFileSync(path.join(p.data, 'hook.py'), 'utf8') === fs.readFileSync(path.join(SRC, 'hook.py'), 'utf8'), JSON.stringify(r));
+  ok('update: only changed scripts are saved, privately', fs.readdirSync(r.saved).join(',') === 'hook.py' && mode(r.saved) === '700' &&
+    mode(path.join(r.saved, 'hook.py')) === '600');
+  const r2 = setup.install({ srcDir: SRC, version: '0.1.9', env, home });
+  ok('update with nothing changed: no backup folder', r2.saved === null && fs.readdirSync(path.join(p.data, 'backups')).length === 1);
+  setup.remove({ env, home, deleteData: true });
+  ok('uninstall: everything Set up made is gone, your local/ folder stays', fs.readdirSync(p.data).join(',') === 'local' &&
+    fs.readFileSync(path.join(p.data, 'local', 'hook_local.py'), 'utf8') === mine);
+}
+
 // 2. broken settings.json is refused and left untouched
 {
   const home = tmpHome(); const env = {};

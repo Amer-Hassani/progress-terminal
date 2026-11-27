@@ -140,9 +140,35 @@ const monitor = (t, uid, desc, id, ms) => {
   ok('a call that did not go to the background: row removed', !(job(t).bg || []).length);
   hook(t, { hook_event_name: 'PostToolUse', tool_name: 'Read', tool_use_id: 'r1', tool_input: {}, tool_response: {} });
   ok('PostToolUse of another tool still marks tool-finished events', job(t).post === true);
-  hook(t, { hook_event_name: 'PreToolUse', agent_type: 'general-purpose', agent_id: 'a1', tool_name: 'Bash', tool_use_id: 's1',
-    tool_input: { command: 'x', description: 'Agent bg', run_in_background: true } });
-  ok("an agent's own background command is not shown in the main job", !(job(t).bg || []).length);
+}
+
+// 6b. background work started by an agent (payload shape captured from a real sub-agent call): a row tagged with
+//     the agent, settled from the same output file, and the agent's calls never touch the main session's tool state
+{
+  const t = fresh();
+  hook(t, { hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { description: 'Move files', model: 'opus' } });
+  hook(t, { hook_event_name: 'Stop', background_tasks: [{ id: 'a1', type: 'subagent', status: 'running', description: 'Move files' }] });
+  const sub = (e) => hook(t, { agent_id: 'a1', agent_type: 'general-purpose', ...e });
+  sub({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 's1', tool_input: { command: 'x', description: 'Agent copy', run_in_background: true } });
+  sub({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 's1', tool_input: {}, tool_response: { stdout: '', backgroundTaskId: 'bagt1' } });
+  sub({ hook_event_name: 'PreToolUse', tool_name: 'Monitor', tool_use_id: 's2', tool_input: { description: 'Agent watch', timeout_ms: 20000 } });
+  sub({ hook_event_name: 'PostToolUse', tool_name: 'Monitor', tool_use_id: 's2', tool_input: {}, tool_response: { taskId: 'bagt2', timeoutMs: 20000, persistent: false } });
+  sub({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 's3', tool_input: { command: 'ls', description: 'Agent foreground' } });
+  sub({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 's3', tool_input: {}, tool_response: { stdout: 'x' } });
+  ok('agent: its background command and watch get rows with its id', bg(t, 'Agent copy').agent === 'a1' && bg(t, 'Agent copy').id === 'bagt1' &&
+    bg(t, 'Agent watch').agent === 'a1' && bg(t, 'Agent watch').timeout === 20000);
+  ok('agent: its foreground Bash is no row, and the main tool state is untouched', job(t).bg.length === 2 && !job(t).post && job(t).actions === 1);
+  out(t, 'bagt1', 'sub tick 1\n\n[exited with code 4]\n');
+  out(t, 'bagt2', 'sub event 1\nsub event 2\n\n[exited with code 0]\n');
+  prune(t);
+  ok('agent: ends read from the same files', bg(t, 'Agent copy').state === 'failed' && bg(t, 'Agent copy').code === 4 &&
+    bg(t, 'Agent watch').state === 'done' && bg(t, 'Agent watch').last === 'sub event 2');
+  const v = py(t, String.raw`
+import re, view
+view.show_all = True
+j = core.all_jobs()[-1]
+print('\n'.join(re.sub(r'\[[0-9;]*m', '', l) for l in view.section(j, 150, 50, time.time())))`);
+  ok('agent: the row names the agent', /B1\. Agent copy.*command · agent Move files · failed · exit 4/.test(v.stdout), v.stdout + v.stderr);
 }
 
 // 7. a vanished command (no file, no longer listed on Stop) is closed as ended, not left running for hours

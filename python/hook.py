@@ -15,7 +15,16 @@ Stop/SubagentStop (background_tasks) and task notifications (UserPromptSubmit) f
 
 Only the main session's calls count, with one exception: an Agent launched by an agent adds a nested row (↳) under
 the same job, closed by its own SubagentStop (matched through Claude Code's meta.json: parentAgentId + description)
-or when its parent row closes.
+or when its parent row closes. A background command or watch started by an agent gets a row too, tagged with the agent.
+
+Your own additions live in local/hook_local.py next to this file. Updates never touch that folder. If the file exists,
+belongs to you and nobody else can write to it, the hook loads it and calls its optional function
+
+    on_event(event, data, job) -> str or None
+
+for SessionStart and UserPromptSubmit (job is None) and for each PreToolUse of the main session (job is the task, inside
+the store lock, saved afterwards, so it may keep its own fields in job['local']). A string it returns is passed to
+Claude as extra context. Anything that goes wrong in it is written to hook-errors.log and never stops the hook.
 """
 import json
 import os
@@ -150,16 +159,15 @@ def action(tool, ti):
     return tool
 
 
-def main():
-    d = json.load(sys.stdin)
+def main(d):
     ev = d.get('hook_event_name') or ''
     sid = d.get('session_id') or ''
     if ev == 'SessionStart':
         cmd = os.path.join(core.BASE, 'progress')
-        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext':
-              'Progress Terminal is on: VS Code shows this session\'s work live. At the start of a task add its steps '
-              'with `%s steps "step one|step two"`, then `%s set "step one" 40 "detail"` and `%s done "step one"`. '
-              'Run long commands as `%s run "label" -- CMD` and downloads as `%s dl URL DEST`.' % ((cmd,) * 5)}}))
+        CONTEXT.append('Progress Terminal is on: VS Code shows this session\'s work live. At the start of a task add its steps '
+                       'with `%s steps "step one|step two"`, then `%s set "step one" 40 "detail"` and `%s done "step one"`. '
+                       'Run long commands as `%s run "label" -- CMD` and downloads as `%s dl URL DEST`.' % ((cmd,) * 5))
+        local_event(ev, d, None)
         return
     if not sid:
         return
@@ -171,6 +179,7 @@ def main():
             return
         first = next((l for l in p.splitlines() if l.strip() and not l.lstrip().startswith('<')), '')
         core.set_session_title(sid, core.short(first, 60) or 'Working')
+        local_event(ev, d, None)
         return
     if ev == 'SubagentStop':
         with core.Lock():
@@ -198,6 +207,23 @@ def main():
                     a.update(agent_spec(ti, d.get('cwd') or '', {}))
                     j.setdefault('agents', []).append(a)
                     j['ev_t'] = time.time()
+                    core.save(j)
+        # ... and its background commands and watches: a row each, tagged with the agent
+        tool = d.get('tool_name') or ''
+        ti = d.get('tool_input') or {}
+        if ev == 'PreToolUse' and (tool == 'Monitor' or (tool == 'Bash' and ti.get('run_in_background') and action(tool, ti))):
+            with core.Lock():
+                j = core.current_job(sid) or core.live_job(sid)
+                if j:
+                    r = bg_started(j, tool, ti, d)
+                    r['agent'] = str(d.get('agent_id') or '')
+                    r['agent_type'] = str(d.get('agent_type') or '')
+                    core.save(j)
+        elif ev in ('PostToolUse', 'PostToolUseFailure') and tool in BG_TOOLS:
+            with core.Lock():
+                j = core.live_job(sid)
+                if j and any(r.get('tuid') == str(d.get('tool_use_id') or '') for r in j.get('bg', [])):
+                    bg_launched(j, d, ev)  # never touches the main session's running-tool state
                     core.save(j)
         return
     if ev == 'PreToolUse':
@@ -243,6 +269,7 @@ def main():
                 else:
                     a.update(agent_spec(ti, d.get('cwd') or '', d))
                 j.setdefault('agents', []).append(a)
+            local_event(ev, d, j)
             core.save(j)
         return
     if ev in ('PostToolUse', 'PostToolUseFailure'):
@@ -335,6 +362,7 @@ def bg_started(j, tool, ti, d):
         except (TypeError, ValueError):
             r['timeout'] = 300000
     j.setdefault('bg', []).append(r)
+    return r
 
 
 def bg_launched(j, d, ev):
@@ -490,13 +518,73 @@ def agents_stopped(j, d, ev):
                 a.update(done=True, t1=now, stopped=True)
 
 
-if __name__ == '__main__':
+CONTEXT = []  # extra context for Claude from this call: printed once, at the end
+LOCAL = os.path.join(core.BASE, 'local', 'hook_local.py')
+_local = []
+
+
+def log_error(what):
     try:
-        main()
+        with open(os.path.join(core.BASE, 'hook-errors.log'), 'a') as f:
+            f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + what[:300] + '\n')
+        os.chmod(os.path.join(core.BASE, 'hook-errors.log'), 0o600)
+    except OSError:
+        pass
+
+
+def _safe(path):
+    """Yours, a plain file (no link), and nobody else can write to it or to its folder."""
+    try:
+        st = os.lstat(path)
+        dt = os.stat(os.path.dirname(path))
+    except OSError:
+        return False
+    import stat
+    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o022 \
+        and dt.st_uid == os.getuid() and not dt.st_mode & 0o022
+
+
+def load_local():
+    """local/hook_local.py, loaded by its exact path, once per call; None if missing, unsafe or broken."""
+    if _local:
+        return _local[0]
+    mod = None
+    if os.path.exists(LOCAL):
+        if not _safe(LOCAL):
+            log_error('hook_local: not loaded: %s must belong to you and be writable only by you (chmod 600, folder 700)' % LOCAL)
+        else:
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location('hook_local', LOCAL)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            except Exception as e:
+                log_error('hook_local: load failed: ' + repr(e))
+                mod = None
+    _local.append(mod)
+    return mod
+
+
+def local_event(ev, d, job):
+    mod = load_local()
+    fn = getattr(mod, 'on_event', None) if mod else None
+    if not callable(fn):
+        return
+    try:
+        text = fn(ev, d, job)
+        if isinstance(text, str) and text.strip():
+            CONTEXT.append(text.strip())
+    except Exception as e:
+        log_error('hook_local: on_event(%s) failed: %r' % (ev, e))
+
+
+if __name__ == '__main__':
+    data = {}
+    try:
+        data = json.load(sys.stdin)
+        main(data)
     except Exception as e:  # never break a tool call; leave a trace
-        try:
-            with open(os.path.join(core.BASE, 'hook-errors.log'), 'a') as f:
-                f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + repr(e)[:300] + '\n')
-            os.chmod(os.path.join(core.BASE, 'hook-errors.log'), 0o600)
-        except OSError:
-            pass
+        log_error(repr(e))
+    if CONTEXT:
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': data.get('hook_event_name') or '',
+                                                 'additionalContext': '\n\n'.join(CONTEXT)}}))
