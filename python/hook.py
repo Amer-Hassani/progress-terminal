@@ -124,6 +124,18 @@ def agent_spec(ti, cwd, hook=None):
     return {'type': typ, 'model': model or 'same model as session', 'effort': effort or 'default effort'}
 
 
+def main_spec(j, d):
+    """The main session's own model and effort, so the user always sees who is doing the work when no agent runs.
+    The transcript tail is read at most once a minute."""
+    m = j.get('main') or {}
+    eff = effort_label(d.get('effort'))
+    if time.time() - m.get('t', 0) < 60 and (not eff or eff == m.get('effort')):
+        return
+    mid = last_model_id(d.get('transcript_path')) or m.get('mid')
+    j['main'] = {'model': model_label(mid) or m.get('model') or 'model unknown', 'mid': mid,
+                 'effort': eff or settings_effort(mid) or m.get('effort') or 'default effort', 't': time.time()}
+
+
 def spec_by_id(aid, hook):
     """An agent launched earlier (another prompt, or before model and effort were recorded): its type from
     Claude Code's own record of it, the model it really answered with, the effort from its file."""
@@ -234,6 +246,7 @@ def main(d):
             j['actions'] = j.get('actions', 0) + 1
             j['tool'] = {'name': core.short(line or tool, 60), 't': time.time()}
             j['ev_t'] = time.time()
+            main_spec(j, d)
             if line:
                 core.add_log(j, line)
             if tool == 'Monitor' or (tool == 'Bash' and ti.get('run_in_background') and line):

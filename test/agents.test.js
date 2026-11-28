@@ -181,7 +181,7 @@ j = core.load(sys.argv[2]); print('\\n'.join(re.sub(r'\\x1b\\[[0-9;]*m', '', l) 
   const v2 = spawnSync(PY, ['-I', '-c', `import sys; sys.path.insert(0, sys.argv[1]); import view; print(view.mid('agent: Retype slide words, set A', 30)); print(view.mid('agent: Retype slide words, set B', 30))`, SRC], { encoding: 'utf8' });
   const [m1, m2] = v2.stdout.trim().split('\n');
   ok('view: long names cut in the middle keep their end', m1.length === 30 && m1.endsWith('set A') && m2.endsWith('set B') && m1 !== m2, v2.stdout + v2.stderr);
-  ok('view: AGENTS heading counts running and done, by model', /AGENTS\s+3 running · 0 done\s+1 × Sonnet · medium effort, 1 × Fable 5\.2 · low effort/.test(v.stdout), v.stdout);
+  ok('view: AGENTS heading counts running and done, by model, main chat as A0', /AGENTS\s+4 running · 0 done\s+1 × model unknown · default effort, 1 × Sonnet · medium effort, 1 × Fable 5\.2 · low effort/.test(v.stdout) && /A0\.\s+Main chat/.test(v.stdout), v.stdout);
   ok('view: now line counts agents by model', /3 agents running \(Sonnet · medium effort, Fable 5\.2 · low effort, same model as session · default effort\)/.test(v.stdout), v.stdout);
 }
 

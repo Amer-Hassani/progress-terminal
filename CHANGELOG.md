@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.13
+
+- The AI in the chat itself is shown as an agent: row A0 "Main chat" in the AGENTS block, with its model and effort (for example "Opus 5.5 · medium effort · this chat"). It counts in "N running" and in the list by model, and it shows even when no other agent was launched.
+
 ## 0.1.12
 
 - The line under an agent that names its model and effort (for example "Opus · medium effort") has its own colour, cyan, so it stands apart from the grey details around it.

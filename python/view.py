@@ -312,6 +312,32 @@ def activity_lines(act, t0, cols, now):
     return out
 
 
+def agents_head(j, agent_rows, ended, moving, cols, now):
+    """AGENTS heading plus A0, the main chat: the AI in this chat is an agent too, so it is counted and shown with
+    its model and effort like every other agent."""
+    mn = j.get('main') if not ended else None
+    main_on = bool(mn) and not j.get('waiting')
+    if not agent_rows and not mn:
+        return []
+    run_n = sum(1 for a in agent_rows if not a.get('done')) + (1 if main_on else 0)
+    done_n = sum(1 for a in agent_rows if a.get('done'))
+    kinds = {}
+    if main_on:
+        kinds[spec(mn)] = 1
+    for a in agent_rows:
+        if not a.get('done') and spec(a):
+            kinds[spec(a)] = kinds.get(spec(a), 0) + 1
+    mix = ', '.join('%d × %s' % (c, k) for k, c in kinds.items())
+    out = ['  %sAGENTS%s  %s%d running%s · %d done%s' % (B, R0, Y if run_n else D, run_n, R0 + D, done_n,
+                                                       ('   ' + mix) if mix else '') + R0]
+    if mn:
+        mark = (Y if moving else D) + '▸' + R0 if main_on else D + '·' + R0
+        state = ('working' if moving else 'thinking') if main_on else 'waiting for background work'
+        out.append('  %s %3s %s%s%s  %s%s · %s%s' % (mark, 'A0.', B, 'Main chat', R0, D, state, fmt(now - j.get('t0', now)), R0))
+        out.append('       ' + CY + spec(mn)[:max(0, cols - 10)] + R0 + D + ' · this chat' + R0)
+    return out
+
+
 def section(j, cols, W, now):
     j = scrub(j)
     out = []
@@ -382,15 +408,7 @@ def section(j, cols, W, now):
         for i in order:
             if not head_done and agent_rows and (i is None or i > plain):
                 head_done = True
-                run_n = sum(1 for a in agent_rows if not a.get('done'))
-                done_n = len(agent_rows) - run_n
-                kinds = {}
-                for a in agent_rows:
-                    if not a.get('done') and spec(a):
-                        kinds[spec(a)] = kinds.get(spec(a), 0) + 1
-                mix = ', '.join('%d × %s' % (c, k) for k, c in kinds.items())
-                out.append('  %sAGENTS%s  %s%d running%s · %d done%s' % (B, R0, Y if run_n else D, run_n, R0 + D, done_n,
-                                                                        ('   ' + mix) if mix else '') + R0)
+                out += agents_head(j, agent_rows, ended, moving, cols, now)
             if i is None:
                 nst = sum(1 for k in finished if steps[k - 1].get('stopped'))
                 out.append('  %s✔%s %s%d agents done%s · press a to list them%s' % (
@@ -418,10 +436,13 @@ def section(j, cols, W, now):
                 out.append('       ' + D + s['tasks'][:cols - 10] + R0)
             if s.get('agent') and not done and not ended:
                 out += activity_lines(s.get('act'), s.get('t0'), cols, now)
+        if not head_done:
+            out += agents_head(j, agent_rows, ended, moving, cols, now)
     elif not ended:
         out.append('  %s%d actions%s' % (D, j.get('actions', 0), R0))
         if doing:
             out.append('  ' + (D if moving else Y) + 'now: ' + doing[:cols - 9] + R0)
+        out += agents_head(j, j.get('agents', []), ended, moving, cols, now)
     else:
         out.append('  %s%d actions%s' % (D, j.get('actions', 0), R0))
     out += bg_lines(j, cols, W, now)
